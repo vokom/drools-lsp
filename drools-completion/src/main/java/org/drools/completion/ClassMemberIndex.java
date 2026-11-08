@@ -130,6 +130,17 @@ public final class ClassMemberIndex implements AutoCloseable {
         }
     }
 
+    /** Resolve metadata without running user static initializers. Unknown classes remain unknown. */
+    Class<?> resolveClass(String fqcn) {
+        if (fqcn == null) return null;
+        try {
+            if (loader != null) return Class.forName(fqcn, false, loader);
+            if (fqcn.startsWith("java.") || fqcn.startsWith("javax."))
+                return Class.forName(fqcn, false, ClassLoader.getPlatformClassLoader());
+        } catch (LinkageError | ClassNotFoundException ignored) { }
+        return null;
+    }
+
     /**
      * Returns the completable members of {@code fqcn}: enum constants, bean
      * properties derived from public no-arg {@code getX()}/{@code isX()}

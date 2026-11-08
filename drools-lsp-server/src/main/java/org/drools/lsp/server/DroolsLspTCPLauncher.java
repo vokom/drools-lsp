@@ -20,59 +20,64 @@
 package org.drools.lsp.server;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
+import java.util.concurrent.Executors;
+import java.util.logging.Level;
 import java.util.logging.Logger;
-
-import org.eclipse.lsp4j.jsonrpc.Launcher;
 import org.eclipse.lsp4j.launch.LSPLauncher;
-import org.eclipse.lsp4j.services.LanguageClient;
 
-/**
- * TCP Launcher for hello language server. Usefull for remote connection and debug
- */
+/** Persistent TCP listener. Each socket owns an independent LSP session. */
 public class DroolsLspTCPLauncher {
+    private static final Logger logger = Logger.getLogger(DroolsLspTCPLauncher.class.getName());
 
-    private static final int PORT = 9925;
-    private static final Logger logger = Logger.getLogger(DroolsLspTCPLauncher.class.getSimpleName());
-
-    public static void main(String[] args) throws Exception {
-        try(ServerSocket serverSocket  = new ServerSocket(PORT)) {
-            logger.info("The chat server is running on PORT " + PORT + ": " + serverSocket);
-            logger.info("wait for clients to connect");
-            Socket socket = serverSocket.accept();
-            logger.info("Connected {}" + socket);
-            startServer(socket.getInputStream(), socket.getOutputStream());
-            socket.close();
-        } catch (IOException e) {
-            e.printStackTrace();
+    public static void main(String[] args) throws IOException {
+        try (ServerSocket listener = new ServerSocket(9925)) {
+            serve(listener);
         }
     }
 
-    /**
-     * Start the language server.
-     * @param in System Standard input stream
-     * @param out System standard output stream
-     * @throws ExecutionException Unable to start the server
-     * @throws InterruptedException Unable to start the server
-     */
-    private static void startServer(InputStream in, OutputStream out) throws ExecutionException, InterruptedException {
-        // Initialize the server
-        DroolsLspServer server = new DroolsLspServer();
-        // Create JSON RPC launcher for HelloLanguageServer instance.
-        Launcher<LanguageClient> launcher = LSPLauncher.createServerLauncher(server, in, out);
+    /** Runs until the owning caller closes the listener. Also usable with an ephemeral port. */
+    public static void serve(ServerSocket listener) throws IOException {
+        var sessions = Executors.newCachedThreadPool(r -> {
+            Thread t = new Thread(r, "drools-lsp-session");
+            t.setDaemon(true);
+            return t;
+        });
+        var sockets = java.util.concurrent.ConcurrentHashMap.<Socket>newKeySet();
+        try {
+            while (!listener.isClosed()) {
+                Socket socket;
+                try {
+                    socket = listener.accept();
+                } catch (java.net.SocketException e) {
+                    if (listener.isClosed()) break;
+                    throw e;
+                }
+                sockets.add(socket);
+                sessions.submit(() -> {
+                    try (socket; DroolsLspServer server = new DroolsLspServer(code -> closeSocket(socket))) {
+                        var launcher = LSPLauncher.createServerLauncher(server,
+                                socket.getInputStream(), socket.getOutputStream());
+                        server.connect(launcher.getRemoteProxy());
+                        launcher.startListening().get();
+                    } catch (Exception e) {
+                        logger.log(Level.FINE, "TCP session ended", e);
+                        if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+                    } finally {
+                        sockets.remove(socket);
+                    }
+                });
+            }
+        } finally {
+            sockets.forEach(DroolsLspTCPLauncher::closeSocket);
+            sessions.shutdownNow();
+        }
+    }
 
-        // Connect the server
-        server.connect(launcher.getRemoteProxy());
-
-        // Start the listener for JsonRPC
-        Future<?> startListening = launcher.startListening();
-
-        // Get the computed result from LS.
-        startListening.get();
+    private static void closeSocket(Socket socket) {
+        try { socket.close(); } catch (IOException e) {
+            logger.log(Level.FINE, "Failed to close TCP socket", e);
+        }
     }
 }

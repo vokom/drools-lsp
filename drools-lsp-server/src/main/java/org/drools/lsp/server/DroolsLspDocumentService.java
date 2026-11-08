@@ -119,6 +119,7 @@ public class DroolsLspDocumentService implements TextDocumentService {
     private final CompileDiagnostics compileDiagnostics;
 
     private final DroolsLspServer server;
+    private final java.util.function.Function<String, List<Field>> memberLookup = this::membersOfTypeName;
 
     public DroolsLspDocumentService(DroolsLspServer server) {
         this.server = server;
@@ -126,7 +127,7 @@ public class DroolsLspDocumentService implements TextDocumentService {
         // Lets binding resolution describe types the DRL does not declare, so
         // hover and inlay hints work on Java fact classes. The closure reads the
         // live indexes on every call, so a rebuilt classpath needs no re-install.
-        ClasspathTypeMembers.install(this::membersOfTypeName);
+        ClasspathTypeMembers.install(memberLookup);
     }
 
     /**
@@ -165,6 +166,15 @@ public class DroolsLspDocumentService implements TextDocumentService {
             found = fqcn;
         }
         return found;
+    }
+
+    synchronized void close() {
+        ClasspathTypeMembers.uninstall(memberLookup);
+        sourcesMap.clear();
+        openTextByPath.clear();
+        javaSourceIndex = JavaSourceTypeIndex.empty();
+        classIndex = ClassIndex.empty();
+        classMemberIndex = ClassMemberIndex.empty();
     }
 
     public void setClassIndex(ClassIndex classIndex) {
@@ -221,7 +231,8 @@ public class DroolsLspDocumentService implements TextDocumentService {
     }
 
     @Override
-    public void didOpen(DidOpenTextDocumentParams params) {
+    public synchronized void didOpen(DidOpenTextDocumentParams params) {
+        if (server.isClosed()) return;
         putSource(params.getTextDocument().getUri(), params.getTextDocument().getText());
     }
 
@@ -245,6 +256,12 @@ public class DroolsLspDocumentService implements TextDocumentService {
             diagnostics.addAll(unknownTypeDiagnostics(uri, text, parsed));
         } catch (Exception e) {
             logger.log(Level.WARNING, "Unknown-type lint failed for " + uri, e);
+        }
+        try {
+            diagnostics.addAll(org.drools.completion.DRLJavaMethods.diagnostics(text, classIndex, classMemberIndex,
+                    toPath(uri), openSiblings(toPath(uri))));
+        } catch (Exception e) {
+            logger.log(Level.WARNING, "Method validation failed for " + uri, e);
         }
         return diagnostics;
     }
@@ -272,7 +289,8 @@ public class DroolsLspDocumentService implements TextDocumentService {
     }
 
     @Override
-    public void didChange(DidChangeTextDocumentParams params) {
+    public synchronized void didChange(DidChangeTextDocumentParams params) {
+        if (server.isClosed()) return;
         String uri = params.getTextDocument().getUri();
         putSource(uri, params.getContentChanges().get(0).getText());
         compileDiagnostics.invalidate(toPath(uri));
@@ -578,7 +596,7 @@ public class DroolsLspDocumentService implements TextDocumentService {
             String text = sourcesMap.get(uri);
             Path documentPath = toPath(uri);
             List<Location> definitions = attempt(() -> DRLDefinitionHelper.findDefinitions(
-                    uri, text, params.getPosition(), classIndex, server.getBuildOutputDirs(),
+                    uri, text, params.getPosition(), classIndex, server.getClasspathEntries(),
                     javaSourceIndex, openSiblings(documentPath)));
             return Either.forLeft(definitions == null ? List.of() : definitions);
         });
@@ -820,7 +838,8 @@ public class DroolsLspDocumentService implements TextDocumentService {
     }
 
     @Override
-    public void didSave(DidSaveTextDocumentParams params) {
+    public synchronized void didSave(DidSaveTextDocumentParams params) {
+        if (server.isClosed()) return;
         if (params == null || params.getTextDocument() == null) {
             return;
         }

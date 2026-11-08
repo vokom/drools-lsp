@@ -32,7 +32,7 @@ import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.Range;
 
 /**
- * Go-to-definition for type names in DRL documents.
+ * Go-to-definition for DRL types and source-backed Java members.
  *
  * <p>Resolution order — DRL first, then Java:
  * <ol>
@@ -57,13 +57,26 @@ public final class DRLDefinitionHelper {
     private DRLDefinitionHelper() {
     }
 
+    public static List<Location> findDefinitions(String uri, String text, Position position,
+                                                 ClassIndex classIndex, Set<Path> classpathEntries) {
+        return findDefinitions(uri, text, position, classIndex, classpathEntries,
+                JavaSourceTypeIndex.empty(), Map.of());
+    }
+
+    public static List<Location> findDefinitions(String uri, String text, Position position,
+                                                 ClassIndex classIndex, Set<Path> classpathEntries,
+                                                 Map<Path, String> openFiles) {
+        return findDefinitions(uri, text, position, classIndex, classpathEntries,
+                JavaSourceTypeIndex.empty(), openFiles);
+    }
+
     /**
      * Returns the definition locations for the identifier at
      * {@code position}, or an empty list when it doesn't name a resolvable
-     * type.
+     * type or Java member.
      *
-     * @param buildOutputDirs build-output directories from the resolved
-     *                        classpath, used for the Maven source-mapping
+     * @param buildOutputDirs resolved classpath entries, including build-output
+     *                        directories and dependency JARs for source mapping
      * @param sourceIndex     source-parsed types, consulted when
      *                        {@code buildOutputDirs} has no compiled {@code
      *                        .class} for the type yet
@@ -95,6 +108,24 @@ public final class DRLDefinitionHelper {
             return List.of();
         }
 
+        List<Location> locals = DRLConsequenceDefinitions.find(uri, parsed, position, word);
+        if (!locals.isEmpty()) return locals;
+
+        List<Location> bindings = DRLBindingDefinitions.find(uri, parsed, position, word);
+        if (!bindings.isEmpty() || word.startsWith("$")) return bindings;
+
+        // A unit declaration names a Java rule-unit class, not a DRL declared fact type.
+        var unit = parsed.compilationUnit.unitdef();
+        Token token = parsed.tokenAt(position);
+        if (unit != null && unit.name != null && token != null
+                && token.getTokenIndex() >= unit.name.getStart().getTokenIndex()
+                && token.getTokenIndex() <= unit.name.getStop().getTokenIndex()) {
+            if (token.getTokenIndex() != unit.name.getStop().getTokenIndex()) return List.of();
+            JavaSourceLocator.Result source = JavaSourceLocator.locate(
+                    resolveUnitFqcn(parsed, classIndex, buildOutputDirs), buildOutputDirs);
+            return source == null ? List.of() : List.of(source.location);
+        }
+
         // 1. declare blocks in this document.
         for (DeclaredType declared : parsed.declaredTypes()) {
             if (word.equals(declared.name)) {
@@ -110,15 +141,13 @@ public final class DRLDefinitionHelper {
 
         // 3. Java sources by Maven convention.
         String fqcn = resolveFqcn(parsed, word, classIndex);
-        if (fqcn == null) {
-            return List.of();
-        }
-        JavaSourceLocator.Result javaSource = JavaSourceLocator.locate(fqcn, buildOutputDirs);
-        if (javaSource != null) {
-            return List.of(javaSource.location);
+        if (fqcn != null) {
+            JavaSourceLocator.Result javaSource = JavaSourceLocator.locateWithJdk(fqcn, buildOutputDirs);
+            if (javaSource != null) return List.of(javaSource.location);
         }
         Location fromSource = sourceLocation(sourceIndex, fqcn);
-        return fromSource == null ? List.of() : List.of(fromSource);
+        if (fromSource != null) return List.of(fromSource);
+        return findJavaMember(uri, text, position, word, parsed, classIndex, buildOutputDirs, openFiles);
     }
 
     /**
@@ -135,6 +164,72 @@ public final class DRLDefinitionHelper {
         Range range = new Range(new Position(type.declLine, type.declColumn),
                                 new Position(type.declLine, type.declColumn + type.simpleName.length()));
         return new Location(file.toUri().toString(), range);
+    }
+
+    /** Same-package rule units take precedence over index matches in other packages. */
+    static String resolveUnitFqcn(ParsedDrl parsed, ClassIndex classes, Set<Path> outputs) {
+        var unit = parsed.compilationUnit.unitdef();
+        if (unit == null || unit.name == null) return null;
+        String name = unit.name.getText();
+        if (name.contains(".")) return name;
+        var pkg = parsed.compilationUnit.packagedef();
+        String local = pkg == null ? name : pkg.name.getText() + "." + name;
+        return JavaSourceLocator.locate(local, outputs) != null ? local : resolveFqcn(parsed, name, classes);
+    }
+
+    private static List<Location> findJavaMember(String uri, String text, Position position, String word,
+            ParsedDrl parsed, ClassIndex classes, Set<Path> outputs, Map<Path, String> openFiles) {
+        List<Location> boundMember = DRLOOPathDefinitions.findBoundMember(uri, text, parsed, position, word, classes, outputs);
+        if (boundMember != null) return boundMember;
+        List<Location> ooPath = DRLOOPathDefinitions.find(parsed, position, word, classes, outputs);
+        if (ooPath != null) return ooPath;
+        try (ClassMemberIndex members = ClassMemberIndex.of(outputs)) {
+            Class<?> receiver = DRLJavaMethods.receiver(text, position, parsed, classes, members, toPath(uri), openFiles);
+            if (receiver == null) return findSourceMember(uri, text, position, word, parsed, classes, outputs, openFiles);
+            Range range = wordRangeAt(text, position);
+            String[] lines = text.split("\\r?\\n", -1);
+            String following = lines[range.getEnd().getLine()].substring(range.getEnd().getCharacter()).stripLeading();
+            return JavaSourceLocator.locateMembers(receiver.getName(), word, following.startsWith("("), outputs);
+        }
+    }
+
+    private static List<Location> findSourceMember(String uri, String text, Position position, String word,
+            ParsedDrl parsed, ClassIndex classes, Set<Path> outputs, Map<Path, String> openFiles) {
+        Range range = wordRangeAt(text, position);
+        if (range == null) return List.of();
+        int offset = 0;
+        // Position is UTF-16; include both CR and LF in offsets on Windows documents.
+        for (int line = 0; line < position.getLine(); line++) {
+            int newline = text.indexOf('\n', offset);
+            if (newline < 0) return List.of();
+            offset = newline + 1;
+        }
+        int start = offset + range.getStart().getCharacter();
+        int end = offset + range.getEnd().getCharacter();
+        String before = text.substring(0, start).stripTrailing();
+        String receiverType = null;
+        Integer index = parsed.tokenIndexAt(position);
+        String implicit = index == null ? null : DRLCompletionHelper.findEnclosingPatternTypeName(parsed.compilationUnit, index);
+        if (before.endsWith(".")) {
+            String receiver = before.substring(0, before.length() - 1).stripTrailing();
+            int begin = receiver.length();
+            while (begin > 0 && Character.isJavaIdentifierPart(receiver.charAt(begin - 1))) begin--;
+            receiver = receiver.substring(begin);
+            if (receiver.equals("this")) receiverType = implicit;
+            else if (receiver.startsWith("$")) {
+                var declared = DRLWorkspaceTypeIndex.build(parsed.declaredTypes(), toPath(uri), openFiles);
+                receiverType = LhsBindingResolver.resolveAt(text, start, declared).get(receiver.substring(1));
+            } else if (!receiver.isEmpty()) {
+                receiverType = resolveFqcn(parsed, receiver, classes);
+            }
+        } else {
+            receiverType = implicit;
+        }
+        if (receiverType == null) return List.of();
+        String owner = DRLCompletionHelper.resolveFqcn(receiverType, receiverType, parsed.compilationUnit, classes);
+        if (owner == null) return List.of();
+        boolean methodCall = text.substring(end).stripLeading().startsWith("(");
+        return JavaSourceLocator.locateMembers(owner, word, methodCall, outputs);
     }
 
     /**

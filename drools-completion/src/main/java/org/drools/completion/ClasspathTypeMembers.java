@@ -62,8 +62,15 @@ public final class ClasspathTypeMembers {
      * {@code null} clears it. The host is expected to read its live type indexes
      * inside the function so a rebuilt classpath needs no re-install.
      */
-    public static void install(Function<String, List<Field>> memberLookup) {
+    public static synchronized void install(Function<String, List<Field>> memberLookup) {
         lookup = memberLookup;
+    }
+
+    /** Clears a connection's lookup without removing another connection's lookup. */
+    public static synchronized void uninstall(Function<String, List<Field>> memberLookup) {
+        if (lookup == memberLookup) {
+            lookup = null;
+        }
     }
 
     /** Members of {@code typeName}, or empty when unknown or no lookup is installed. */

@@ -151,6 +151,22 @@ class JavaSourceTypingServerTest {
     }
 
     @Test
+    void closingAnotherSessionPreservesTheActiveClasspathMembersSeam() throws IOException {
+        Path srcDir = tempDir.resolve("src/main/java/com/example");
+        Files.createDirectories(srcDir);
+        Files.writeString(srcDir.resolve("Foo.java"),
+                "package com.example; public class Foo { public String getCode() { return null; } }");
+        try (DroolsLspServer first = new DroolsLspServer(code -> {});
+             DroolsLspServer second = new DroolsLspServer(code -> {})) {
+            second.initializeJavaSourceTypingForTest(tempDir);
+            first.close();
+            String drl = "rule R\n  when\n    Foo( $c : code )\n  then\nend\n";
+            assertThat(LhsBindingResolver.resolveAt(drl, drl.indexOf("$c"), Map.of()))
+                    .containsEntry("c", "String");
+        }
+    }
+
+    @Test
     void packageFiltersSettingExcludesNonMatchingPackage() throws IOException {
         Path srcDir = tempDir.resolve("src/main/java/com/example");
         Files.createDirectories(srcDir);

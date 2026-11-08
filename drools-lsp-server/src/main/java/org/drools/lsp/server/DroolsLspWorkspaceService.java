@@ -31,7 +31,8 @@ import org.eclipse.lsp4j.DidChangeConfigurationParams;
 import org.eclipse.lsp4j.DidChangeWatchedFilesParams;
 import org.eclipse.lsp4j.services.WorkspaceService;
 
-public class DroolsLspWorkspaceService implements WorkspaceService {
+public class DroolsLspWorkspaceService implements WorkspaceService, AutoCloseable {
+    private boolean closed;
 
     static final long DEBOUNCE_DELAY_MS = 1000;
 
@@ -93,7 +94,8 @@ public class DroolsLspWorkspaceService implements WorkspaceService {
     }
 
     @Override
-    public void didChangeWatchedFiles(DidChangeWatchedFilesParams params) {
+    public synchronized void didChangeWatchedFiles(DidChangeWatchedFilesParams params) {
+        if (closed) return;
         ScheduledFuture<?> existing = pendingRebuild;
         if (existing != null) {
             existing.cancel(false);
@@ -101,5 +103,12 @@ public class DroolsLspWorkspaceService implements WorkspaceService {
         pendingRebuild = scheduler.schedule(
                 () -> server.rebuildClassIndex(),
                 DEBOUNCE_DELAY_MS, TimeUnit.MILLISECONDS);
+    }
+    @Override
+    public synchronized void close() {
+        if (closed) return;
+        closed = true;
+        if (pendingRebuild != null) pendingRebuild.cancel(true);
+        scheduler.shutdownNow();
     }
 }
