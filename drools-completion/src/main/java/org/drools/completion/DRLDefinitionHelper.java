@@ -1,3 +1,22 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 package org.drools.completion;
 
 import java.nio.file.Path;
@@ -25,6 +44,9 @@ import org.eclipse.lsp4j.Range;
  *       classpath contains {@code <module>/target/classes/pkg/Type.class},
  *       the definition is {@code <module>/src/main/java/pkg/Type.java} if
  *       that file exists. JAR classes have no navigable source.</li>
+ *   <li>when no compiled {@code .class} exists yet (pre-build), the {@code
+ *       .java} source location from {@code sourceIndex}, if the type was
+ *       parsed from workspace source.</li>
  * </ol>
  */
 public final class DRLDefinitionHelper {
@@ -42,10 +64,14 @@ public final class DRLDefinitionHelper {
      *
      * @param buildOutputDirs build-output directories from the resolved
      *                        classpath, used for the Maven source-mapping
+     * @param sourceIndex     source-parsed types, consulted when
+     *                        {@code buildOutputDirs} has no compiled {@code
+     *                        .class} for the type yet
      */
     public static List<Location> findDefinitions(String uri, String text, Position position,
-                                                 ClassIndex classIndex, Set<Path> buildOutputDirs) {
-        return findDefinitions(uri, text, position, classIndex, buildOutputDirs, Map.of());
+                                                 ClassIndex classIndex, Set<Path> buildOutputDirs,
+                                                 JavaSourceTypeIndex sourceIndex) {
+        return findDefinitions(uri, text, position, classIndex, buildOutputDirs, sourceIndex, Map.of());
     }
 
     /**
@@ -55,7 +81,7 @@ public final class DRLDefinitionHelper {
      */
     public static List<Location> findDefinitions(String uri, String text, Position position,
                                                  ClassIndex classIndex, Set<Path> buildOutputDirs,
-                                                 Map<Path, String> openFiles) {
+                                                 JavaSourceTypeIndex sourceIndex, Map<Path, String> openFiles) {
         if (text == null || position == null) {
             return List.of();
         }
@@ -88,7 +114,27 @@ public final class DRLDefinitionHelper {
             return List.of();
         }
         JavaSourceLocator.Result javaSource = JavaSourceLocator.locate(fqcn, buildOutputDirs);
-        return javaSource == null ? List.of() : List.of(javaSource.location);
+        if (javaSource != null) {
+            return List.of(javaSource.location);
+        }
+        Location fromSource = sourceLocation(sourceIndex, fqcn);
+        return fromSource == null ? List.of() : List.of(fromSource);
+    }
+
+    /**
+     * Builds a {@link Location} anchored at {@code fqcn}'s declaration-name
+     * token from {@code sourceIndex}, or {@code null} when the index doesn't
+     * know {@code fqcn} (unparsed, or not under any indexed source root).
+     */
+    private static Location sourceLocation(JavaSourceTypeIndex sourceIndex, String fqcn) {
+        Path file = sourceIndex.fileOf(fqcn);
+        JavaSourceType type = sourceIndex.byFqcn(fqcn);
+        if (file == null || type == null) {
+            return null;
+        }
+        Range range = new Range(new Position(type.declLine, type.declColumn),
+                                new Position(type.declLine, type.declColumn + type.simpleName.length()));
+        return new Location(file.toUri().toString(), range);
     }
 
     /**
@@ -195,7 +241,13 @@ public final class DRLDefinitionHelper {
         return new Range(new Position(position.getLine(), start), new Position(position.getLine(), end));
     }
 
-    private static boolean isIdentifierChar(char c) {
+    /**
+     * The identifier alphabet shared by the word/chain extractors: DRL
+     * identifiers plus the {@code $} binding prefix. Package-private so
+     * {@link DRLHoverHelper}'s chain extraction stays character-for-character
+     * consistent with {@link #wordAt}.
+     */
+    static boolean isIdentifierChar(char c) {
         return Character.isLetterOrDigit(c) || c == '_' || c == '$';
     }
 

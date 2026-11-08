@@ -10,15 +10,20 @@ This is an experimental implementation of [LSP](https://microsoft.github.io/lang
 
 It is composed of 2 parts: the **server** containing the actual LSP implementation and the **client** which is a VSCode extension consuming the services provided by the server.
 
-The server is a plain Java/Maven project. Executing a `mvn clean package` in its folder will generate a jar file that will be automatically linked and consumed by the client when executed as a VSCode extension.
+The server is a Java 17/Maven project. Run `mvn clean install` at the repository root to build it and copy the assembled server JAR into `client/lib/` for the VS Code extension.
 
 Server Architecture
 ===
 
-The server part is composed of three modules:
-1. **drools-parser** - responsible for actual drl-syntax parsing, eventually invoking a JAVA-LSP engine to read the `RHS` content (that is plain Java code); The antlr4 grammar files are taken from the latest drools. 
-2. **drools-completion** - used to provide completion suggestion using the C3 engine; it depends on `com.vmware.antlr4-c3:antlr4-c3` and on `drools-parser`
-3. **drools-lsp-server** - the "gateway" between the client and the parsing/completion logic; by itself it should not implement any business logic, but should be concerned only with communication; it depends directly on `drools-completion`
+The server uses the published `org.drools:drools-drl-parser:10.2.0` and ANTLR 4.13.2, with five supporting modules:
+
+1. **drools-parser-compat** - adapts validated Java lambda function bodies for the published parser, preserving source tokens and formatter safety checks.
+2. **drools-completion** - completion, hover, navigation, Java source indexing, workspace grouping and syntax/lint diagnostics; completion uses the C3 engine.
+3. **drools-formatter** - DRL formatting, configuration and safety checks, also available as a standalone CLI.
+4. **drools-lsp-engine-bridge** - a small bridge loaded against the workspace's own Drools engine for compile diagnostics.
+5. **drools-lsp-server** - LSP transport, document and workspace services, formatting and compile-diagnostic lifecycle management.
+
+See [Server configuration and protocols](docs/SERVER.md) for settings, grouping, CLI usage, engine isolation and limitations of the unchanged VS Code client. [Migration notes](docs/SERVER_MIGRATION.md) describe the pinned source and standalone adaptations.
 
 [VSCode](https://code.visualstudio.com/) Usage
 ===

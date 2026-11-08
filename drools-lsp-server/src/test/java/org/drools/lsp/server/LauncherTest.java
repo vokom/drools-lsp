@@ -1,3 +1,22 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 package org.drools.lsp.server;
 
 import java.io.IOException;
@@ -52,6 +71,16 @@ class LauncherTest {
         client.expectedNotifications.put("window/logMessage", p);
         serverLauncher.getRemoteProxy().logMessage(p);
         client.joinOnEmpty();
+    }
+
+    @Test
+    void remoteClientProxyIsAlsoAnEndpoint() {
+        // DroolsLspServer sends drools/fileGroupsChanged through the raw endpoint,
+        // since LanguageClient does not declare that custom method. That relies on
+        // lsp4j building its proxy over both the service interface and Endpoint
+        // (ServiceEndpoints#toServiceObject), so pin it here rather than leave it
+        // to be rediscovered.
+        assertThat((Object) serverLauncher.getRemoteProxy()).isInstanceOf(Endpoint.class);
     }
 
     @Test

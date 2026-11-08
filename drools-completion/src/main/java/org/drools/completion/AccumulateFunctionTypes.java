@@ -1,3 +1,22 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 package org.drools.completion;
 
 import java.util.Map;
@@ -7,8 +26,8 @@ import java.util.Map;
  * result type), used by {@link LhsBindingResolver} and the inlay-hint helper to
  * resolve accumulate result bindings ({@code $count : count()}).
  *
- * <p>Seeded with the complete set of Drools' built-in accumulate functions. The
- * names and result types are transcribed from the Drools engine itself —
+ * <p>Seeded with Drools 10.2.0's complete set of built-in accumulate functions.
+ * The names and result types are transcribed from the Drools engine itself —
  * {@code META-INF/kie.default.properties.conf} (function name → impl class) and
  * each impl's {@code getResultType()}.
  * Baking them in avoids a runtime dependency on {@code drools-core};
@@ -26,10 +45,14 @@ public final class AccumulateFunctionTypes {
             Map.entry("maxN", "Number"),
             Map.entry("maxI", "Integer"),
             Map.entry("maxL", "Long"),
+            Map.entry("maxBI", "BigInteger"),
+            Map.entry("maxBD", "BigDecimal"),
             Map.entry("min", "Comparable"),
             Map.entry("minN", "Number"),
             Map.entry("minI", "Integer"),
             Map.entry("minL", "Long"),
+            Map.entry("minBI", "BigInteger"),
+            Map.entry("minBD", "BigDecimal"),
             Map.entry("count", "Long"),
             Map.entry("collectList", "List"),
             Map.entry("collectSet", "Set"),

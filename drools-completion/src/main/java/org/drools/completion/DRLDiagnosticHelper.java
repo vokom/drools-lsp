@@ -1,3 +1,22 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 package org.drools.completion;
 
 import java.util.ArrayList;
@@ -5,12 +24,13 @@ import java.util.Collections;
 import java.util.List;
 
 import org.antlr.v4.runtime.BaseErrorListener;
+import org.antlr.v4.runtime.CommonTokenStream;
 import org.antlr.v4.runtime.Lexer;
 import org.antlr.v4.runtime.RecognitionException;
 import org.antlr.v4.runtime.Recognizer;
 import org.antlr.v4.runtime.Token;
 import org.drools.drl.parser.antlr4.DRL10Parser;
-import org.drools.drl.parser.antlr4.DRLParserHelper;
+import org.drools.lsp.parser.DrlParserFactory;
 import org.eclipse.lsp4j.Diagnostic;
 import org.eclipse.lsp4j.DiagnosticSeverity;
 import org.eclipse.lsp4j.Position;
@@ -41,22 +61,22 @@ public final class DRLDiagnosticHelper {
 
     /**
      * Parses {@code text} once, returning both the compilation unit and the
-     * syntax diagnostics. Callers that also need the tree (e.g. the unknown-type
-     * lint) can reuse it instead of re-parsing.
+     * syntax diagnostics, with the errors that mark a deprecated construct
+     * reported as deprecations instead (see {@link DeprecatedConstructs}).
+     * Callers that also need the tree (e.g. the unknown-type lint) can reuse it
+     * instead of re-parsing.
      */
     public static Parsed parse(String text) {
         if (text == null || text.isEmpty()) {
             return new Parsed(null, Collections.emptyList());
         }
-        DRL10Parser parser = DRLParserHelper.createDrlParser(text);
+        DRL10Parser parser = DrlParserFactory.createDrlParser(text);
         List<Diagnostic> diagnostics = new ArrayList<>();
         CollectingErrorListener listener = new CollectingErrorListener(diagnostics);
 
-        // Safe today because DRLParserHelper builds an unfilled
-        // CommonTokenStream directly over the lexer; lexer errors emitted
-        // during lazy tokenization therefore reach the listener attached
-        // below. If the helper ever pre-fills the stream, lexer errors would
-        // be lost — attach the listener before tokenization in that case.
+        // DrlParserFactory keeps tokenization lazy, including compatibility
+        // validation of function bodies, so lexer listeners can be attached
+        // before any tokens are read.
         Lexer lexer = (Lexer) parser.getTokenStream().getTokenSource();
         lexer.removeErrorListeners();
         lexer.addErrorListener(listener);
@@ -64,7 +84,12 @@ public final class DRLDiagnosticHelper {
         parser.removeErrorListeners();
         parser.addErrorListener(listener);
 
-        return new Parsed(parser.compilationUnit(), diagnostics);
+        DRL10Parser.CompilationUnitContext compilationUnit = parser.compilationUnit();
+        // The lint scans the whole document, including any tail the parser's
+        // error recovery left unread.
+        CommonTokenStream tokens = (CommonTokenStream) parser.getTokenStream();
+        tokens.fill();
+        return new Parsed(compilationUnit, DeprecatedConstructs.reclassify(text, tokens.getTokens(), diagnostics));
     }
 
     /**
@@ -116,7 +141,7 @@ public final class DRLDiagnosticHelper {
             d.setRange(new Range(new Position(line - 1, startCol),
                                  new Position(line - 1, endCol)));
             d.setSeverity(DiagnosticSeverity.Error);
-            d.setSource("drools-parser");
+            d.setSource("drools-drl-parser");
             d.setMessage(msg);
             diagnostics.add(d);
         }

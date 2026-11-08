@@ -18,6 +18,33 @@ mvn clean install
 ```
 
 This builds all Java modules and copies the server uber-JAR into `client/lib/`.
+The server artifact remains `drools-lsp-server-jar-with-dependencies.jar` and
+starts with `org.drools.lsp.server.Main`. The formatter CLI is built as
+`drools-formatter/target/drools-formatter-jar-with-dependencies.jar`.
+
+Use JDK 17 to verify runtime compatibility, for example:
+
+```bash
+JAVA_HOME=/path/to/jdk-17 mvn clean install
+java -jar drools-formatter/target/drools-formatter-jar-with-dependencies.jar --help
+```
+
+`mvn test` runs the parser compatibility, completion/indexing/grouping/lint,
+formatter, engine bridge and server suites. Engine tests use Drools 10.2.0 as a
+test dependency. The deployed server discovers the engine from the workspace's
+classpath. See [server configuration](docs/SERVER.md) and
+[migration notes](docs/SERVER_MIGRATION.md).
+
+After installation, verify the unchanged extension and its Java fixture:
+
+```bash
+cd client
+npm ci
+npm run pretest
+npm test
+```
+
+The extension tests download and launch VS Code and need a graphical session.
 
 ### VS Code Extension
 

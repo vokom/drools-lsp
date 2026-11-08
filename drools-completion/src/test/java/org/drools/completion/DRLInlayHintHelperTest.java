@@ -1,3 +1,22 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
 package org.drools.completion;
 
 import java.util.List;
@@ -17,6 +36,37 @@ class DRLInlayHintHelperTest {
     void emptyTextReturnsNoHints() {
         assertThat(DRLInlayHintHelper.getHints("", null)).isEmpty();
         assertThat(DRLInlayHintHelper.getHints(null, null)).isEmpty();
+    }
+
+    /**
+     * A declare may extend a Java class, and a binding on one of the supertype's
+     * fields has no type unless the host's member lookup is consulted — the
+     * declared-type index knows nothing beyond the DRL.
+     */
+    @Test
+    void emitsHintForFieldInheritedFromAJavaSupertype() {
+        ClassMemberIndex memberIndex = new ClassMemberIndex(getClass().getClassLoader());
+        ClasspathTypeMembers.install(name -> "Pet".equals(name)
+                ? memberIndex.membersOf("org.drools.completion.fixtures.Pet")
+                : List.of());
+        try {
+            String drl =
+                "declare SpecialPet extends Pet\n" +
+                "  nickname : String\n" +
+                "end\n" +
+                "rule \"r\" when\n" +
+                "  SpecialPet( $l : legs )\n" +
+                "  SpecialPet( legs == $l )\n" +
+                "then\n" +
+                "end\n";
+
+            List<InlayHint> hints = DRLInlayHintHelper.getHints(drl, null);
+
+            // Both the binding declaration and the later naked usage carry the type.
+            assertThat(hints).filteredOn(h -> ": int".equals(labelOf(h))).hasSize(2);
+        } finally {
+            ClasspathTypeMembers.install(null);
+        }
     }
 
     @Test
@@ -351,6 +401,34 @@ class DRLInlayHintHelperTest {
 
         assertThat(hints).extracting(DRLInlayHintHelperTest::labelOf)
             .containsExactlyInAnyOrder(": int", ": int");
+    }
+
+    @Test
+    void emitsHintsForBindingsAfterAConditionCommentSayingThen() {
+        String drl = """
+                package demo;
+
+                global java.util.List results;
+
+                declare Fact
+                  code : String
+                end
+
+                rule R
+                  when
+                    Fact( $first : code )
+                    // match this and then the other
+                    Fact( $second : code )
+                  then
+                    results.add($second);
+                end
+                """;
+
+        List<InlayHint> hints = DRLInlayHintHelper.getHints(drl, null);
+
+        // Both declarations, plus the consequence usage.
+        assertThat(hints).extracting(DRLInlayHintHelperTest::labelOf)
+            .containsExactlyInAnyOrder(": String", ": String", ": String");
     }
 
     private static String labelOf(InlayHint hint) {
