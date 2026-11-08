@@ -259,7 +259,7 @@ public class DroolsLspDocumentService implements TextDocumentService {
         }
         try {
             diagnostics.addAll(org.drools.completion.DRLJavaMethods.diagnostics(text, classIndex, classMemberIndex,
-                    toPath(uri), openSiblings(toPath(uri))));
+                    toPath(uri), openSiblings(toPath(uri)), server.getClasspathEntries()));
         } catch (Exception e) {
             logger.log(Level.WARNING, "Method validation failed for " + uri, e);
         }

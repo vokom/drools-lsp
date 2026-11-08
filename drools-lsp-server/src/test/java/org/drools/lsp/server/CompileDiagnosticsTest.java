@@ -208,6 +208,22 @@ class CompileDiagnosticsTest {
     }
 
     @Test
+    void ruleUnitFilesAreLeftOutOfTheCompile(@TempDir Path tmp) throws Exception {
+        String unit = "package com.example;\nunit PassportRuleUnit;\nrule R when $p: /passports[ true ] then end\n";
+        Path drl = write(tmp, "A.drl", unit);
+        Fixture f = fixture(shared());
+        open(f.service(), drl, unit);
+
+        f.compile().triggerNow(drl, unit, false);
+
+        Thread.sleep(500);
+        assertThat(f.compile().cachedFor(drl)).isEmpty();
+        assertThat(f.client().messages).isEmpty();
+        assertThat(CompileDiagnostics.declaresRuleUnit(unit)).isTrue();
+        assertThat(CompileDiagnostics.declaresRuleUnit("package a;\n// unit X;\nrule R when then end")).isFalse();
+    }
+
+    @Test
     void syntaxErrorsSkipTheCompile(@TempDir Path tmp) throws Exception {
         String broken = "rule broken";
         Path drl = write(tmp, "A.drl", broken);

@@ -13,6 +13,11 @@ public final class DRLJavaMethods {
 
     static Class<?> receiver(String text, Position position, ParsedDrl parsed,
             ClassIndex classes, ClassMemberIndex members, Path document, Map<Path, String> openFiles) {
+        return receiver(text, position, parsed, classes, members, document, openFiles, Set.of());
+    }
+
+    static Class<?> receiver(String text, Position position, ParsedDrl parsed,
+            ClassIndex classes, ClassMemberIndex members, Path document, Map<Path, String> openFiles, Set<Path> outputs) {
         Range range = DRLDefinitionHelper.wordRangeAt(text, position);
         if (range == null) return null;
         int offset = 0;
@@ -40,7 +45,10 @@ public final class DRLJavaMethods {
             if (chain.isEmpty()) return null;
         }
         String type;
-        if (chain.isEmpty() || chain.get(0).equals("this")) type = implicit;
+        if (chain.isEmpty()) {
+            String target = modifyTargetType(before, text, start, parsed, document, openFiles, classes, outputs);
+            type = target != null ? target : implicit;
+        } else if (chain.get(0).equals("this")) type = implicit;
         else if (chain.get(0).startsWith("$")) {
             var declared = DRLWorkspaceTypeIndex.build(parsed.declaredTypes(), document, openFiles);
             type = LhsBindingResolver.resolveAt(text, start, declared).get(chain.get(0).substring(1));
@@ -54,8 +62,61 @@ public final class DRLJavaMethods {
         return owner;
     }
 
+    /**
+     * Type name of the binding being modified when the identifier at {@code start} is a setter call at
+     * statement level of a {@code modify($x) { ... }} block, else {@code null}. Nested calls inside setter
+     * arguments are not statement level and keep the ordinary resolution.
+     */
+    static String modifyTargetType(List<? extends Token> before, String text, int start, ParsedDrl parsed,
+            Path document, Map<Path, String> openFiles, ClassIndex classes, Set<Path> outputs) {
+        if (before.isEmpty()) return null;
+        String last = before.get(before.size() - 1).getText();
+        if (!last.equals("{") && !last.equals(",")) return null;
+        // Innermost unclosed brace, tracking nesting; parentheses and brackets must be balanced to stay at statement level.
+        Deque<Integer> braces = new ArrayDeque<>();
+        int parens = 0;
+        Deque<Integer> parensAtBrace = new ArrayDeque<>();
+        for (int i = 0; i < before.size(); i++) {
+            switch (before.get(i).getText()) {
+                case "{" -> { braces.push(i); parensAtBrace.push(parens); }
+                case "}" -> { if (!braces.isEmpty()) { braces.pop(); parensAtBrace.pop(); } }
+                case "(", "[" -> parens++;
+                case ")", "]" -> parens--;
+                default -> {}
+            }
+        }
+        if (braces.isEmpty() || parens != parensAtBrace.peek()) return null;
+        int open = braces.peek();
+        // Shape: modify ( identifier ) {
+        if (open < 4 || !before.get(open - 1).getText().equals(")") || !before.get(open - 3).getText().equals("(")
+                || !before.get(open - 4).getText().equals("modify")) return null;
+        String binding = before.get(open - 2).getText();
+        if (binding.isEmpty() || !Character.isJavaIdentifierStart(binding.charAt(0))) return null;
+        var declared = DRLWorkspaceTypeIndex.build(parsed.declaredTypes(), document, openFiles);
+        var types = LhsBindingResolver.resolveAt(text, start, declared);
+        String type = types.get(binding.startsWith("$") ? binding.substring(1) : binding);
+        if (type != null || outputs.isEmpty()) return type;
+        // OOPath binding such as `$a: /items[...]`: the element type comes from the rule unit's data source.
+        Token name = before.get(open - 2);
+        return DRLOOPathDefinitions.boundPathOwner(document.toUri().toString(), parsed,
+                new Position(name.getLine() - 1, name.getCharPositionInLine()), binding, classes, outputs);
+    }
+
+    /** Tokens on the default channel preceding {@code start}, for {@link #modifyTargetType}. */
+    static List<? extends Token> tokensBefore(String text, int start) {
+        JavaLexer lexer = new JavaLexer(CharStreams.fromString(text.substring(0, start)));
+        lexer.removeErrorListeners();
+        return lexer.getAllTokens().stream().filter(t -> t.getChannel() == Token.DEFAULT_CHANNEL).toList();
+    }
+
     public static List<Diagnostic> diagnostics(String text, ClassIndex classes, ClassMemberIndex members,
                                                Path document, Map<Path, String> openFiles) {
+        return diagnostics(text, classes, members, document, openFiles, Set.of());
+    }
+
+    /** As above; {@code outputs} (build output dirs) additionally lets OOPath bindings be resolved in modify blocks. */
+    public static List<Diagnostic> diagnostics(String text, ClassIndex classes, ClassMemberIndex members,
+                                               Path document, Map<Path, String> openFiles, Set<Path> outputs) {
         if (text == null || text.isBlank()) return List.of();
         ParsedDrl parsed = ParsedDrl.of(text);
         JavaLexer lexer = new JavaLexer(CharStreams.fromString(text)); lexer.removeErrorListeners();
@@ -72,7 +133,7 @@ public final class DRLJavaMethods {
             String word = name.getText();
             if (Pattern.compile("(?s)\\bfunction\\s+[^;{}]*?\\b" + Pattern.quote(word) + "\\s*\\(").matcher(text).find()
                     || Pattern.compile("\\bimport\\s+(?:function|static)\\s+[^;]*[.]" + Pattern.quote(word) + "\\s*;").matcher(text).find()) continue;
-            Class<?> receiver = receiver(text, position, parsed, classes, members, document, openFiles);
+            Class<?> receiver = receiver(text, position, parsed, classes, members, document, openFiles, outputs);
             if (receiver == null || receiver.getSimpleName().equals(word)) continue;
             try {
                 if (Arrays.stream(receiver.getMethods()).anyMatch(m -> m.getName().equals(word))) continue;
@@ -82,6 +143,54 @@ public final class DRLJavaMethods {
                 "Unknown method '" + word + "' on " + receiver.getName(), DiagnosticSeverity.Error, "drools-methods");
             diagnostic.setCode("unknown-method"); result.add(diagnostic);
         }
+        if (!outputs.isEmpty()) unitMemberDiagnostics(text, parsed, tokens, classes, members, document, outputs, result);
         return result;
+    }
+
+    private static final Set<String> CONSEQUENCE_ROOTS = Set.of("drools", "kcontext", "java", "javax", "jakarta", "org", "com", "io", "net");
+
+    /**
+     * Reports a misspelled rule-unit member used as the root of a member chain in a consequence, e.g.
+     * {@code invalidPassportz.add(x)}. Conservative: only lowercase roots that are not locals, bindings,
+     * globals, package prefixes or consequence helpers, and only when the unit class loads.
+     */
+    private static void unitMemberDiagnostics(String text, ParsedDrl parsed, List<? extends Token> tokens,
+            ClassIndex classes, ClassMemberIndex members, Path document, Set<Path> outputs, List<Diagnostic> result) {
+        String unit = DRLDefinitionHelper.resolveUnitFqcn(parsed, classes, outputs);
+        if (unit == null) return;
+        Class<?> owner = members.resolveClass(unit);
+        if (owner == null) return;
+        String uri = document.toUri().toString();
+        for (int i = 0; i + 1 < tokens.size() && result.size() < 20; i++) {
+            Token name = tokens.get(i);
+            String word = name.getText();
+            if (name.getType() != JavaLexer.IDENTIFIER || !tokens.get(i + 1).getText().equals(".")
+                    || !Character.isLowerCase(word.charAt(0)) || CONSEQUENCE_ROOTS.contains(word)) continue;
+            if (i > 0 && Set.of(".", "new", "::").contains(tokens.get(i - 1).getText())) continue;
+            Position position = new Position(name.getLine() - 1, name.getCharPositionInLine());
+            if (DRLDefinitionHelper.caretInCommentOrString(parsed, position)) continue;
+            // Query inside the word: at its first column the lookup can land on the preceding whitespace token.
+            Token drlToken = parsed.tokenAt(new Position(position.getLine(), position.getCharacter() + 1));
+            if (drlToken == null || !DRLOOPathDefinitions.inConsequence(parsed.compilationUnit, drlToken.getTokenIndex())) continue;
+            String quoted = Pattern.quote(word);
+            if (Pattern.compile("\\bglobal\\s+[^;\\n]*\\b" + quoted + "\\b").matcher(text).find()
+                    || Pattern.compile("(?m)^\\s*(?:import|package)\\s+(?:static\\s+|function\\s+)?" + quoted + "\\.").matcher(text).find()) continue;
+            if (!DRLConsequenceDefinitions.find(uri, parsed, position, word).isEmpty()
+                    || !DRLBindingDefinitions.find(uri, parsed, position, word).isEmpty()) continue;
+            if (hasMember(owner, word)) continue;
+            Diagnostic diagnostic = new Diagnostic(new Range(position, new Position(position.getLine(), position.getCharacter() + word.length())),
+                    "Unknown member '" + word + "' on rule unit " + owner.getName(), DiagnosticSeverity.Error, "drools-methods");
+            diagnostic.setCode("unknown-unit-member"); result.add(diagnostic);
+        }
+    }
+
+    private static boolean hasMember(Class<?> owner, String name) {
+        try {
+            for (Class<?> type = owner; type != null; type = type.getSuperclass()) {
+                if (Arrays.stream(type.getDeclaredFields()).anyMatch(f -> f.getName().equals(name))) return true;
+            }
+            return Arrays.stream(owner.getFields()).anyMatch(f -> f.getName().equals(name))
+                    || Arrays.stream(owner.getMethods()).anyMatch(m -> m.getName().equals(name));
+        } catch (LinkageError | SecurityException unavailable) { return true; }
     }
 }

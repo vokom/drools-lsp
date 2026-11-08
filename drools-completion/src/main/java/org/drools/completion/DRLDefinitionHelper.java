@@ -184,7 +184,7 @@ public final class DRLDefinitionHelper {
         List<Location> ooPath = DRLOOPathDefinitions.find(parsed, position, word, classes, outputs);
         if (ooPath != null) return ooPath;
         try (ClassMemberIndex members = ClassMemberIndex.of(outputs)) {
-            Class<?> receiver = DRLJavaMethods.receiver(text, position, parsed, classes, members, toPath(uri), openFiles);
+            Class<?> receiver = DRLJavaMethods.receiver(text, position, parsed, classes, members, toPath(uri), openFiles, outputs);
             if (receiver == null) return findSourceMember(uri, text, position, word, parsed, classes, outputs, openFiles);
             Range range = wordRangeAt(text, position);
             String[] lines = text.split("\\r?\\n", -1);
@@ -223,7 +223,9 @@ public final class DRLDefinitionHelper {
                 receiverType = resolveFqcn(parsed, receiver, classes);
             }
         } else {
-            receiverType = implicit;
+            String target = DRLJavaMethods.modifyTargetType(DRLJavaMethods.tokensBefore(text, start), text, start,
+                    parsed, toPath(uri), openFiles, classes, outputs);
+            receiverType = target != null ? target : implicit;
         }
         if (receiverType == null) return List.of();
         String owner = DRLCompletionHelper.resolveFqcn(receiverType, receiverType, parsed.compilationUnit, classes);

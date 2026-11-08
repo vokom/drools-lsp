@@ -790,13 +790,16 @@ public final class DRLLintHelper {
         if (text == null || text.isEmpty() || cu == null) {
             return Collections.emptyList();
         }
-        DiagnosticSeverity severity = severityFor(PROP_UNKNOWN_TYPES, "warning");
-        if (severity == null) {
-            return Collections.emptyList();
-        }
         // Strings/comments are blanked so type-like text inside them can't match;
         // the cu and the sanitized text share character positions.
         String sanitized = sanitize(text);
+        // A syntax error rather than a type warning, so it is reported even when unknown-type lint is off.
+        List<Diagnostic> syntax = new ArrayList<>();
+        collectForallCommas(cu, sanitized, syntax);
+        DiagnosticSeverity severity = severityFor(PROP_UNKNOWN_TYPES, "warning");
+        if (severity == null) {
+            return syntax;
+        }
 
         // Declared types of the document + siblings, kept as full types so a
         // declared enum's constants can be verified for qualified references.
@@ -829,7 +832,7 @@ public final class DRLLintHelper {
         Set<String> suggestions = new HashSet<>(known);
         suggestions.addAll(classIndex.simpleNames());
 
-        List<Diagnostic> out = new ArrayList<>();
+        List<Diagnostic> out = new ArrayList<>(syntax);
         collectPatternTypes(cu, cu, known, suggestions, classIndex, siblingImports,
                             classpathResolved, severity, out);
         scanQualifiedRefs(cu, sanitized, declared, suggestions, cu, classIndex, memberIndex,
@@ -848,6 +851,50 @@ public final class DRLLintHelper {
         return out;
     }
 
+    /**
+     * {@code forall} takes patterns separated by whitespace only. With commas the parser falls back to an
+     * ordinary pattern named {@code forall}; report each top-level comma of such a construct.
+     */
+    private static void collectForallCommas(ParseTree node, String sanitized, List<Diagnostic> out) {
+        if (out.size() >= MAX_UNKNOWN_TYPE_DIAGNOSTICS) {
+            return;
+        }
+        if (node instanceof DRL10Parser.LhsPatternContext pattern && pattern.objectType != null) {
+            Token keyword = pattern.objectType.getStart();
+            if (keyword != null && keyword == pattern.objectType.getStop()
+                    && keyword.getType() == org.drools.drl.parser.antlr4.DRL10Lexer.DRL_FORALL) {
+                int i = keyword.getStopIndex() + 1;
+                while (i < sanitized.length() && Character.isWhitespace(sanitized.charAt(i))) {
+                    i++;
+                }
+                if (i < sanitized.length() && sanitized.charAt(i) == '(') {
+                    int depth = 0;
+                    for (; i < sanitized.length() && out.size() < MAX_UNKNOWN_TYPE_DIAGNOSTICS; i++) {
+                        char c = sanitized.charAt(i);
+                        if (c == '(' || c == '[' || c == '{') {
+                            depth++;
+                        } else if (c == ')' || c == ']' || c == '}') {
+                            if (--depth == 0) {
+                                break;
+                            }
+                        } else if (c == ',' && depth == 1) {
+                            Diagnostic d = new Diagnostic();
+                            d.setSeverity(DiagnosticSeverity.Error);
+                            d.setSource("drools-syntax");
+                            d.setCode("forall-comma");
+                            d.setRange(rangeOf(sanitized, i, i + 1));
+                            d.setMessage("'forall' does not accept commas between patterns. Separate the patterns with whitespace.");
+                            out.add(d);
+                        }
+                    }
+                }
+            }
+        }
+        for (int i = 0; i < node.getChildCount(); i++) {
+            collectForallCommas(node.getChild(i), sanitized, out);
+        }
+    }
+
     /** Walks {@code node}, checking each pattern's object type against {@code cu}'s resolution. */
     private static void collectPatternTypes(ParseTree node, DRL10Parser.CompilationUnitContext cu,
                                             Set<String> known, Set<String> suggestions,
@@ -860,7 +907,12 @@ public final class DRLLintHelper {
         if (node instanceof DRL10Parser.LhsPatternContext pattern && pattern.objectType != null) {
             Token start = pattern.objectType.getStart();
             Token stop = pattern.objectType.getStop();
-            if (start != null && stop != null) {
+            // The parser reads a condition element it cannot match, such as `forall ( a : /xs[..], /xs[..] )`
+            // with comma-separated paths, as a pattern named after the keyword. That is not a type reference.
+            boolean keyword = start != null && start == stop && (start.getType() == org.drools.drl.parser.antlr4.DRL10Lexer.DRL_FORALL
+                    || start.getType() == org.drools.drl.parser.antlr4.DRL10Lexer.DRL_NOT
+                    || start.getType() == org.drools.drl.parser.antlr4.DRL10Lexer.DRL_EXISTS);
+            if (!keyword && start != null && stop != null) {
                 Range range = new Range(
                         new Position(start.getLine() - 1, start.getCharPositionInLine()),
                         new Position(stop.getLine() - 1,

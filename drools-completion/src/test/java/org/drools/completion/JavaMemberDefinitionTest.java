@@ -37,7 +37,39 @@ class JavaMemberDefinitionTest {
         var result = find(drl, "isExpired", "()");
         assertThat(result).hasSize(1); assertName(java, result.get(0), "isExpired");
     }
-    @Test void boundReceiverOnRhsAndRuleScope() throws Exception {
+    @Test void modifyBlockSetterResolvesOnModifiedBinding() throws Exception {
+        Path passport = source("Passport", "package demo; public class Passport { public void setValidation(int value) {} }");
+        String drl = "import demo.Passport;\nrule R when\n $p: Passport()\nthen\n modify($p) {\n  setValidation( 2 ),\n  setValidation( 3 )\n }\nend\n";
+        var result = find(drl, "setValidation", "( 2 )"); assertThat(result).hasSize(1); assertName(passport, result.get(0), "setValidation");
+        result = find(drl, "setValidation", "( 3 )"); assertThat(result).hasSize(1); assertName(passport, result.get(0), "setValidation");
+    }
+@Test void modifyBlockSetterResolvesOnOoPathBinding() throws Exception {
+        source("PassportRuleUnit", "package demo; public class PassportRuleUnit { public DataStream<Passport> getPassports() {return null;} }");
+        Path passport = source("Passport", "package demo; public class Passport { public void setValidation(int value) {} }");
+        String drl = "package demo\nunit PassportRuleUnit;\nrule R when\n $p: /passports[ true ]\nthen\n modify($p) {\n  setValidation( 2 )\n }\nend\n";
+        var result = find(drl, "setValidation", "( 2 )"); assertThat(result).hasSize(1); assertName(passport, result.get(0), "setValidation");
+    }
+@Test void bareRuleUnitFieldInConsequenceResolves() throws Exception {
+        Path unit = source("PassportRuleUnit", "package demo; import java.util.List; public class PassportRuleUnit { private List<String> invalidPassports; public DataStream<Passport> getPassports() {return null;} }");
+        source("Passport", "package demo; public class Passport {}");
+        String drl = "package demo\nunit PassportRuleUnit;\nrule R when\n $p: /passports[ true ]\nthen\n invalidPassports.add( \"x\" );\nend\n";
+        var result = find(drl, "invalidPassports", ".add"); assertThat(result).hasSize(1); assertName(unit, result.get(0), "invalidPassports");
+    }
+@Test void dataStoreMethodsInConsequenceResolveOnConsequenceDataStore() throws Exception {
+        source("PassportRuleUnit", "package demo; import org.drools.ruleunits.api.DataStore; public class PassportRuleUnit { public DataStore<String> getVisas() {return null;} }");
+        Path api = module.resolve("src/main/java/org/drools/ruleunits/api/DataStore.java");
+        Path impl = module.resolve("src/main/java/org/drools/ruleunits/impl/datasources/ConsequenceDataStore.java");
+        Files.createDirectories(api.getParent()); Files.createDirectories(impl.getParent());
+        Files.writeString(api, "package org.drools.ruleunits.api; public interface DataStore<T> { void add(T o); }");
+        Files.writeString(impl, "package org.drools.ruleunits.impl.datasources; public interface ConsequenceDataStore<T> { void add(T o); void addLogical(T o); }");
+        Files.createDirectories(outputs.resolve("org/drools/ruleunits/api")); Files.createDirectories(outputs.resolve("org/drools/ruleunits/impl/datasources"));
+        Files.write(outputs.resolve("org/drools/ruleunits/api/DataStore.class"), new byte[0]);
+        Files.write(outputs.resolve("org/drools/ruleunits/impl/datasources/ConsequenceDataStore.class"), new byte[0]);
+        String drl = "package demo\nunit PassportRuleUnit;\nimport org.drools.ruleunits.api.DataStore;\nrule R when then\n visas.addLogical( \"x\" );\nend\n";
+        var result = find(drl, "addLogical", "(");
+        assertThat(result).hasSize(1); assertName(impl, result.get(0), "addLogical");
+    }
+@Test void boundReceiverOnRhsAndRuleScope() throws Exception {
         Path passport = source("Passport", "package demo; public class Passport { public void setValidation(int value) {} }");
         Path other = source("Other", "package demo; public class Other { public void setValidation(int value) {} }");
         String drl = "import demo.Passport; import demo.Other;\nrule One when $p: Other() then $p.setValidation(1); end\nrule Two when $p: Passport() then $p.setValidation(2); end\n";

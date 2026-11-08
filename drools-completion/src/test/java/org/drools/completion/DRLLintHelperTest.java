@@ -655,6 +655,23 @@ class DRLLintHelperTest {
         return DRLLintHelper.lintUnknownTypes(text, null, Map.of(), ClassIndex.empty(), members, true);
     }
 
+    @Test
+    void forallWithCommasReportsTheCommaNotAnUnknownType() {
+        String text = "package a;\nunit U;\nrule R\n  when\n    $a: /as\n    forall (\n      $p : /ps[ x, y ],\n      /ps[ this == $p ]\n    )\n  then\nend\n";
+        List<Diagnostic> diags = lintUnknownTypes(text);
+
+        assertThat(diags).hasSize(1);
+        assertThat(diags.get(0).getCode().getLeft()).isEqualTo("forall-comma");
+        assertThat(diags.get(0).getSeverity()).isEqualTo(DiagnosticSeverity.Error);
+        assertThat(diags.get(0).getRange().getStart().getLine()).isEqualTo(6);
+    }
+
+    @Test
+    void forallWithWhitespaceSeparatedPatternsIsClean() {
+        String text = "package a;\nunit U;\nrule R\n  when\n    $a: /as\n    forall (\n      $p : /ps[ x, y ]\n      /ps[ this == $p ]\n    )\n  then\nend\n";
+        assertThat(lintUnknownTypes(text)).isEmpty();
+    }
+
     private static final String DECLARE_PERSON = "declare Person\n  name : String\nend\n";
 
     @Test

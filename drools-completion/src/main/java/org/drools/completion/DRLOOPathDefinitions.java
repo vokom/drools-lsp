@@ -17,6 +17,9 @@ import org.eclipse.lsp4j.Position;
 
 /** Source-backed rule-unit OOPath navigation without loading or initializing user classes. */
 final class DRLOOPathDefinitions {
+    private static final String DATA_STORE = "org.drools.ruleunits.api.DataStore";
+    private static final String CONSEQUENCE_DATA_STORE = "org.drools.ruleunits.impl.datasources.ConsequenceDataStore";
+
     private DRLOOPathDefinitions() {}
 
     /** Null means the caret is outside OOPath; an empty list means unresolved OOPath. */
@@ -85,7 +88,9 @@ final class DRLOOPathDefinitions {
         }
         if (token == null || !token.getText().equals(word)) return null;
         int previous = previousCode(tokens, token.getTokenIndex());
-        if (previous < 0 || !tokens.get(previous).getText().equals(".")) return null;
+        if (previous < 0 || !tokens.get(previous).getText().equals(".")) {
+            return unitMemberInConsequence(parsed, position, token, tokens, word, classes, outputs);
+        }
         var chain = new java.util.ArrayList<String>();
         Token rootToken = null;
         while (previous >= 0 && tokens.get(previous).getText().equals(".")) {
@@ -141,7 +146,42 @@ final class DRLOOPathDefinitions {
         int next = token.getTokenIndex() + 1;
         while (next < tokens.size() && tokens.get(next).getChannel() != Token.DEFAULT_CHANNEL) next++;
         boolean call = next < tokens.size() && tokens.get(next).getText().equals("(");
-        return JavaSourceLocator.locateMembers(owner, word, call, outputs);
+        var found = JavaSourceLocator.locateMembers(owner, word, call, outputs);
+        if (found.isEmpty() && DATA_STORE.equals(owner) && inConsequence(parsed.compilationUnit, parsed.tokenAt(position) == null
+                ? -1 : parsed.tokenAt(position).getTokenIndex())) {
+            // Drools hands consequences a ConsequenceDataStore in place of each DataStore field (add, addLogical, update, remove).
+            found = JavaSourceLocator.locateMembers(CONSEQUENCE_DATA_STORE, word, call, outputs);
+        }
+        return found;
+    }
+
+    /**
+     * A bare identifier in a consequence (e.g. {@code invalidPassports.add(...)}) names a rule-unit member.
+     * Returns {@code null} when it is not one, so the other resolvers still run.
+     */
+    private static List<Location> unitMemberInConsequence(ParsedDrl parsed, Position position, Token token,
+            List<Token> tokens, String word, ClassIndex classes, Set<Path> outputs) {
+        Token drlToken = parsed.tokenAt(position);
+        if (drlToken == null || !inConsequence(parsed.compilationUnit, drlToken.getTokenIndex())) return null;
+        String owner = DRLDefinitionHelper.resolveUnitFqcn(parsed, classes, outputs);
+        if (owner == null) return null;
+        int next = token.getTokenIndex() + 1;
+        while (next < tokens.size() && tokens.get(next).getChannel() != Token.DEFAULT_CHANNEL) next++;
+        boolean call = next < tokens.size() && tokens.get(next).getText().equals("(");
+        var members = JavaSourceLocator.locateMembers(owner, word, call, outputs);
+        return members.isEmpty() ? null : members;
+    }
+
+    /** Element type of the OOPath bound to {@code binding} (e.g. {@code $a: /items[...]}), or {@code null}. */
+    static String boundPathOwner(String uri, ParsedDrl parsed, Position at, String binding,
+                                 ClassIndex classes, Set<Path> outputs) {
+        var declarations = DRLBindingDefinitions.find(uri, parsed, at, binding);
+        if (declarations.size() != 1) return null;
+        Position declaredAt = declarations.get(0).getRange().getStart();
+        Token declaration = parsed.tokenAt(new Position(declaredAt.getLine(), declaredAt.getCharacter() + 1));
+        if (declaration == null) return null;
+        var path = boundPath(parsed.compilationUnit, declaration.getTokenIndex());
+        return path == null ? null : pathOwner(parsed, path, null, classes, outputs);
     }
 
     private static String pathOwner(ParsedDrl parsed, DRL10Parser.XpathPrimaryContext path, Integer caret,
@@ -160,7 +200,7 @@ final class DRLOOPathDefinitions {
         return caret == null ? owner : null;
     }
 
-    private static boolean inConsequence(ParseTree node, int token) {
+    static boolean inConsequence(ParseTree node, int token) {
         if (node instanceof ParserRuleContext context && !contains(context, token)) return false;
         if (node instanceof DRL10Parser.ConsequenceBodyContext) return true;
         for (int i = 0; i < node.getChildCount(); i++) {

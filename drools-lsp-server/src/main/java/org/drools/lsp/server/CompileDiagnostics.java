@@ -325,6 +325,17 @@ final class CompileDiagnostics {
         return names.toString();
     }
 
+    private static final java.util.regex.Pattern RULE_UNIT = java.util.regex.Pattern.compile("(?m)^\\s*unit\\s+[\\w.]+\\s*;");
+
+    /**
+     * The classic KieBuilder used for the compile cannot see a rule unit's data sources: it reports false
+     * errors such as "The identifier 'passports' is not in scope" for every OOPath and unit field, so
+     * files declaring a {@code unit} are left out. The parser, lint and navigation checks still cover them.
+     */
+    static boolean declaresRuleUnit(String text) {
+        return text != null && RULE_UNIT.matcher(text).find();
+    }
+
     private Compilation compile(Path saved, String text, boolean fullScope, Engine target) throws Exception {
         Path root = rootFor(saved);
         Map<Path, String> sources = new LinkedHashMap<>();
@@ -347,13 +358,25 @@ final class CompileDiagnostics {
                 skipped.add(normalized);
                 continue;
             }
+            if (declaresRuleUnit(siblingText)) {
+                logger.fine(() -> "Leaving " + normalized + " out of the compile, it belongs to a rule unit");
+                skipped.add(normalized);
+                continue;
+            }
             sources.put(normalized, siblingText);
         }
         if (fullScope && hasErrors(DRLDiagnosticHelper.parse(text).diagnostics)) {
             logger.fine(() -> "Leaving " + saved + " out of the compile, it has syntax errors");
             skipped.add(saved);
+        } else if (declaresRuleUnit(text)) {
+            logger.fine(() -> "Leaving " + saved + " out of the compile, it belongs to a rule unit");
+            skipped.add(saved);
         } else {
             sources.put(saved, text);
+        }
+
+        if (sources.isEmpty()) {
+            return new Compilation(sources, Map.of(), skipped);
         }
 
         Map<String, Path> fileByKfsPath = new LinkedHashMap<>();
