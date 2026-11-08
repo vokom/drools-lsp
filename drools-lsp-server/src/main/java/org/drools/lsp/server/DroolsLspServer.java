@@ -30,12 +30,21 @@ import org.eclipse.lsp4j.services.LanguageClientAware;
 import org.eclipse.lsp4j.services.LanguageServer;
 import org.eclipse.lsp4j.services.WorkspaceService;
 
-public class DroolsLspServer implements LanguageServer, LanguageClientAware {
+public class DroolsLspServer implements LanguageServer, LanguageClientAware, AutoCloseable {
 
     private static final Logger logger = Logger.getLogger(DroolsLspServer.class.getName());
 
     private final DroolsLspDocumentService textService;
-    private final WorkspaceService workspaceService;
+    private final DroolsLspWorkspaceService workspaceService;
+    private final java.util.function.IntConsumer exitHandler;
+    private final java.util.function.Function<Path, Set<Path>> classpathResolver;
+    private final java.util.concurrent.ExecutorService initializationExecutor =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "drools-lsp-initialize");
+                t.setDaemon(true);
+                return t;
+            });
+    private volatile boolean closed;
 
     private LanguageClient client;
     private volatile Set<Path> classpathEntries = Set.of();
@@ -47,13 +56,25 @@ public class DroolsLspServer implements LanguageServer, LanguageClientAware {
     private volatile boolean shutdownReceived = false;
 
     public DroolsLspServer() {
+        this(System::exit);
+    }
+
+    public DroolsLspServer(java.util.function.IntConsumer exitHandler) {
+        this(exitHandler, MavenClasspathResolver::resolve);
+    }
+
+    DroolsLspServer(java.util.function.IntConsumer exitHandler,
+                    java.util.function.Function<Path, Set<Path>> classpathResolver) {
+        this.classpathResolver = java.util.Objects.requireNonNull(classpathResolver);
+        this.exitHandler = java.util.Objects.requireNonNull(exitHandler);
         textService = new DroolsLspDocumentService(this);
         workspaceService = new DroolsLspWorkspaceService(this);
     }
 
 
     @Override
-    public void connect(LanguageClient client) {
+    public synchronized void connect(LanguageClient client) {
+        if (closed) return;
         this.client = client;
     }
 
@@ -70,13 +91,14 @@ public class DroolsLspServer implements LanguageServer, LanguageClientAware {
     }
 
     public void rebuildClassIndex() {
+        if (closed) return;
         Set<Path> dirs = buildOutputDirs;
         if (dirs.isEmpty() && jarClassIndex.size() == 0) {
             return;
         }
         try {
             ClassIndex outputIndex = ClassIndex.build(dirs);
-            textService.setClassIndex(ClassIndex.merge(jarClassIndex, outputIndex));
+            publishClassIndex(ClassIndex.merge(jarClassIndex, outputIndex));
             // Fresh loader so recompiled classes aren't served from the old one's cache.
             swapMemberIndex(ClassMemberIndex.of(classpathEntries));
             // Drop the declared-type parse cache so edited sibling files re-parse
@@ -87,7 +109,8 @@ public class DroolsLspServer implements LanguageServer, LanguageClientAware {
         }
     }
 
-    private void setResolvedClasspath(Set<Path> entries) {
+    private synchronized void setResolvedClasspath(Set<Path> entries) {
+        if (closed) return;
         this.classpathEntries = entries;
         this.buildOutputDirs = filterDirectories(entries);
         Set<Path> jars = filterJars(entries);
@@ -107,6 +130,10 @@ public class DroolsLspServer implements LanguageServer, LanguageClientAware {
     }
 
     private synchronized void swapMemberIndex(ClassMemberIndex next) {
+        if (closed) {
+            next.close();
+            return;
+        }
         ClassMemberIndex previous = this.classMemberIndex;
         this.classMemberIndex = next;
         textService.setClassMemberIndex(next);
@@ -197,7 +224,8 @@ public class DroolsLspServer implements LanguageServer, LanguageClientAware {
 
         String rootUri = params.getRootUri();
         if (rootUri != null) {
-            CompletableFuture.runAsync(() -> {
+            initializationExecutor.submit(() -> {
+                if (closed) return;
                 try {
                     Path rootPath = Paths.get(URI.create(rootUri));
 
@@ -222,26 +250,32 @@ public class DroolsLspServer implements LanguageServer, LanguageClientAware {
                     for (Path mavenRoot : mavenRoots) {
                         outputDirs.addAll(MavenClasspathResolver.resolveBuildOutputDirs(mavenRoot));
                     }
-                    buildOutputDirs = outputDirs;
-                    textService.setClassIndex(ClassIndex.build(outputDirs));
+                    synchronized (this) {
+                        if (closed) return;
+                        buildOutputDirs = outputDirs;
+                    }
+                    // Member completion must work before the external Maven process finishes.
+                    setResolvedClasspath(outputDirs);
+                    publishClassIndex(ClassIndex.build(outputDirs));
 
                     // Then resolve the full classpath (dependency JARs via mvn) and
                     // merge, so member hover and field completion over dependencies
                     // become available too.
                     Set<Path> resolved = new LinkedHashSet<>();
                     for (Path mavenRoot : mavenRoots) {
-                        resolved.addAll(MavenClasspathResolver.resolve(mavenRoot));
+                        if (closed || Thread.currentThread().isInterrupted()) return;
+                        resolved.addAll(classpathResolver.apply(mavenRoot));
                     }
                     setResolvedClasspath(resolved);
                     ClassIndex outputIndex = ClassIndex.build(buildOutputDirs);
-                    textService.setClassIndex(ClassIndex.merge(jarClassIndex, outputIndex));
+                    publishClassIndex(ClassIndex.merge(jarClassIndex, outputIndex));
                 } catch (Exception e) {
                     logger.log(Level.WARNING, "Failed to build class index at startup", e);
                 }
             });
         }
 
-        return CompletableFuture.supplyAsync(() -> initializeResult);
+        return CompletableFuture.completedFuture(initializeResult);
     }
 
     @Override
@@ -254,19 +288,37 @@ public class DroolsLspServer implements LanguageServer, LanguageClientAware {
     @Override
     public CompletableFuture<Object> shutdown() {
         shutdownReceived = true;
-        try {
-            classMemberIndex.close();
-        } catch (Exception e) {
-            logger.log(Level.FINE, "Failed to close class member index on shutdown", e);
-        }
-        DRLDeclaredTypeParser.clearCache();
+        close();
         return CompletableFuture.completedFuture(null);
     }
 
     @Override
     public void exit() {
         // LSP spec: exit code 0 only when a shutdown request was received first.
-        System.exit(shutdownReceived ? 0 : 1);
+        close();
+        exitHandler.accept(shutdownReceived ? 0 : 1);
+    }
+
+    private synchronized void publishClassIndex(ClassIndex index) {
+        if (!closed) textService.setClassIndex(index);
+    }
+
+    public boolean isClosed() { return closed; }
+
+    /** Releases only resources owned by this connection. Safe after EOF or shutdown. */
+    @Override
+    public synchronized void close() {
+        if (closed) return;
+        closed = true;
+        initializationExecutor.shutdownNow();
+        workspaceService.close();
+        classMemberIndex.close();
+        classMemberIndex = ClassMemberIndex.empty();
+        textService.close();
+        classpathEntries = Set.of();
+        buildOutputDirs = Set.of();
+        jarClassIndex = ClassIndex.empty();
+        client = null;
     }
 
     @Override

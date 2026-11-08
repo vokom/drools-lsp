@@ -439,4 +439,17 @@ class DRLCompletionHelperTest {
         };
 
     }
+
+    @Test
+    void completeUnboundPatternAndPartialCaretInsideExistingName(@org.junit.jupiter.api.io.TempDir Path directory) throws Exception {
+        Files.createDirectories(directory.resolve("demo"));
+        Files.createFile(directory.resolve("demo/Passport.class"));
+        Files.createFile(directory.resolve("demo/PassCard.class"));
+        Files.createFile(directory.resolve("demo/Other.class"));
+        var index = ClassIndex.build(Set.of(directory));
+        String drl = "import demo.Passport;\nrule R when\n Passport()\nthen\nend\n";
+        var items = DRLCompletionHelper.getCompletionItems(drl, new Position(2, 5), getLanguageClient(), index);
+        assertThat(items.stream().filter(i -> i.getKind() == CompletionItemKind.Class).map(CompletionItem::getLabel))
+            .contains("Passport", "PassCard").doesNotContain("Other");
+    }
 }

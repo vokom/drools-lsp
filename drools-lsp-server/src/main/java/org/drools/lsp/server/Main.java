@@ -37,11 +37,12 @@ public class Main {
     }
 
     public static void startServer(InputStream in, OutputStream out) throws InterruptedException, ExecutionException {
-        DroolsLspServer server = new DroolsLspServer();
-        Launcher<LanguageClient> l = LSPLauncher.createServerLauncher(server, in, out);
-        Future<?> startListening = l.startListening();
-        server.connect(l.getRemoteProxy());
-        startListening.get();
+        try (DroolsLspServer server = new DroolsLspServer()) {
+            Launcher<LanguageClient> l = LSPLauncher.createServerLauncher(server, in, out);
+            server.connect(l.getRemoteProxy());
+            Future<?> startListening = l.startListening();
+            startListening.get();
+        }
     }
 
 }

@@ -111,7 +111,7 @@ public class DRLCompletionHelper {
 
         DRL10Parser.CompilationUnitContext compilationUnit = drlParser.compilationUnit();
         Integer nodeIndex = computeTokenIndex(drlParser, row, col);
-        String prefix = extractPrefix(drlParser, nodeIndex);
+        String prefix = extractPrefix(drlParser, nodeIndex, col);
 
         // null when the caret is past the last token; fall back to EOF.
         int caretTokenIndex = nodeIndex != null
@@ -318,11 +318,14 @@ public class DRLCompletionHelper {
 
     private static boolean isPatternPosition(CodeCompletionCore.CandidatesCollection candidates) {
         List<Integer> path = candidates.rules.get(DRL10Parser.RULE_drlQualifiedName);
-        if (path == null) {
-            return false;
-        }
-        return path.contains(DRL10Parser.RULE_lhsPattern)
-            || path.contains(DRL10Parser.RULE_lhsPatternBind);
+        if (path != null && (path.contains(DRL10Parser.RULE_lhsPattern)
+                || path.contains(DRL10Parser.RULE_lhsPatternBind))) return true;
+        // An unbound pattern and a binding label share an identifier prefix. C3 may retain
+        // only the label candidate even when an existing pattern type is under the caret.
+        List<Integer> identifierPath = candidates.rules.get(DRL10Parser.RULE_drlIdentifier);
+        return identifierPath != null && identifierPath.contains(DRL10Parser.RULE_lhsPatternBind)
+                && !identifierPath.contains(DRL10Parser.RULE_constraint)
+                && (identifierPath.contains(DRL10Parser.RULE_label) || identifierPath.contains(DRL10Parser.RULE_unif));
     }
 
     private static List<CompletionItem> getClassCompletionItems(DRL10Parser.CompilationUnitContext compilationUnit, ClassIndex classIndex, String prefix) {
@@ -362,14 +365,15 @@ public class DRLCompletionHelper {
         return imports;
     }
 
-    private static String extractPrefix(DRL10Parser drlParser, Integer nodeIndex) {
+    private static String extractPrefix(DRL10Parser drlParser, Integer nodeIndex, int column) {
         if (nodeIndex == null || nodeIndex < 0 || nodeIndex >= drlParser.getInputStream().size()) {
             return "";
         }
         Token token = drlParser.getInputStream().get(nodeIndex);
         String text = token.getText();
         if (text != null && !text.isEmpty() && Character.isJavaIdentifierStart(text.charAt(0))) {
-            return text;
+            int length = Math.min(text.length(), Math.max(0, column - token.getCharPositionInLine()));
+            return text.substring(0, length);
         }
         return "";
     }

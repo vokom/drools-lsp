@@ -94,6 +94,12 @@ public class DroolsLspDocumentService implements TextDocumentService {
         this.server = server;
     }
 
+    synchronized void close() {
+        sourcesMap.clear();
+        classIndex = ClassIndex.empty();
+        classMemberIndex = ClassMemberIndex.empty();
+    }
+
     public void setClassIndex(ClassIndex classIndex) {
         this.classIndex = classIndex;
     }
@@ -107,7 +113,8 @@ public class DroolsLspDocumentService implements TextDocumentService {
     }
 
     @Override
-    public void didOpen(DidOpenTextDocumentParams params) {
+    public synchronized void didOpen(DidOpenTextDocumentParams params) {
+        if (server.isClosed()) return;
         sourcesMap.put(params.getTextDocument().getUri(), params.getTextDocument().getText());
     }
 
@@ -132,6 +139,12 @@ public class DroolsLspDocumentService implements TextDocumentService {
         } catch (Exception e) {
             logger.log(Level.WARNING, "Unknown-type lint failed for " + uri, e);
         }
+        try {
+            diagnostics.addAll(org.drools.completion.DRLJavaMethods.diagnostics(text, classIndex, classMemberIndex,
+                    toPath(uri), openSiblings(toPath(uri))));
+        } catch (Exception e) {
+            logger.log(Level.WARNING, "Method validation failed for " + uri, e);
+        }
         return diagnostics;
     }
 
@@ -153,7 +166,8 @@ public class DroolsLspDocumentService implements TextDocumentService {
     }
 
     @Override
-    public void didChange(DidChangeTextDocumentParams params) {
+    public synchronized void didChange(DidChangeTextDocumentParams params) {
+        if (server.isClosed()) return;
         sourcesMap.put(params.getTextDocument().getUri(), params.getContentChanges().get(0).getText());
     }
 
@@ -391,7 +405,7 @@ public class DroolsLspDocumentService implements TextDocumentService {
             String text = sourcesMap.get(uri);
             Path documentPath = toPath(uri);
             List<Location> definitions = attempt(() -> DRLDefinitionHelper.findDefinitions(
-                    uri, text, params.getPosition(), classIndex, server.getBuildOutputDirs(),
+                    uri, text, params.getPosition(), classIndex, server.getClasspathEntries(),
                     openSiblings(documentPath)));
             return Either.forLeft(definitions == null ? List.of() : definitions);
         });

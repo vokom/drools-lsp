@@ -29,6 +29,7 @@ public class MavenClasspathResolver {
         List<Path> pomFiles = findPomFiles(rootDir);
 
         for (Path pom : pomFiles) {
+            if (Thread.currentThread().isInterrupted()) break;
             Path moduleDir = pom.getParent();
             try {
                 Set<Path> moduleCp = resolveModule(moduleDir);
@@ -160,6 +161,7 @@ public class MavenClasspathResolver {
             logger.log(Level.WARNING, "Failed to create temp file for classpath resolution", e);
             return;
         }
+        Process process = null;
         try {
             String mvnCommand = System.getProperty("os.name").toLowerCase().contains("win") ? "mvn.cmd" : "mvn";
             ProcessBuilder pb = new ProcessBuilder(
@@ -168,13 +170,8 @@ public class MavenClasspathResolver {
                 "-Dmdep.outputFile=" + cpFile.toAbsolutePath()
             );
             pb.redirectErrorStream(true);
-            Process process = pb.start();
-
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                while (reader.readLine() != null) {
-                    // drain
-                }
-            }
+            pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+            process = pb.start();
 
             boolean finished = process.waitFor(60, TimeUnit.SECONDS);
             if (!finished) {
@@ -195,9 +192,15 @@ public class MavenClasspathResolver {
                     .map(Path::of)
                     .forEach(entries::add);
             }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         } catch (Exception e) {
             logger.log(Level.WARNING, "Failed to resolve dependency classpath for " + moduleDir + ": " + e.getMessage());
         } finally {
+            if (process != null && process.isAlive()) {
+                process.descendants().forEach(ProcessHandle::destroyForcibly);
+                process.destroyForcibly();
+            }
             try { Files.deleteIfExists(cpFile); } catch (IOException ignored) {}
         }
     }
