@@ -46,6 +46,12 @@ public final class DRLTypeMismatch {
     }
 
     public static List<Diagnostic> diagnostics(String text, ClassIndex classIndex, ClassMemberIndex memberIndex) {
+        return diagnostics(text, classIndex, memberIndex, Set.of());
+    }
+
+    /** As above; {@code outputs} (build output dirs) additionally lets OOPath element types be resolved. */
+    public static List<Diagnostic> diagnostics(String text, ClassIndex classIndex, ClassMemberIndex memberIndex,
+                                               Set<java.nio.file.Path> outputs) {
         List<Diagnostic> out = new ArrayList<>();
         if (text == null || text.isBlank()) {
             return out;
@@ -62,13 +68,13 @@ public final class DRLTypeMismatch {
         for (DeclaredType type : DRLDeclaredTypeParser.extractFromCompilationUnit(parsed.compilationUnit)) {
             declared.put(type.name, type);
         }
-        scan(parsed.compilationUnit, parsed, declared, classIndex, memberIndex, severity, out);
+        scan(parsed.compilationUnit, parsed, declared, classIndex, memberIndex, outputs, severity, out);
         return out;
     }
 
     private static void scan(ParseTree node, ParsedDrl parsed, Map<String, DeclaredType> declared,
                              ClassIndex classIndex, ClassMemberIndex memberIndex,
-                             DiagnosticSeverity severity, List<Diagnostic> out) {
+                             Set<java.nio.file.Path> outputs, DiagnosticSeverity severity, List<Diagnostic> out) {
         if (node instanceof DRL10Parser.LhsPatternContext pattern
                 && pattern.objectType != null && pattern.constraints() != null) {
             Map<String, String> fields = fieldTypes(pattern.objectType.getText(), parsed, declared, classIndex, memberIndex);
@@ -76,8 +82,25 @@ public final class DRLTypeMismatch {
                 check(pattern.constraints(), parsed.tokens(), fields, severity, out);
             }
         }
+        if (node instanceof DRL10Parser.XpathChunkContext chunk && chunk.xpathExpressionList() != null
+                && !outputs.isEmpty()) {
+            // OOPath constraint such as /passports[age >= "10"]: the field owner is the path's element type.
+            String owner = DRLOOPathDefinitions.enclosingPathOwner(parsed,
+                    chunk.xpathExpressionList().getStart().getTokenIndex(), classIndex, outputs);
+            if (owner != null) {
+                Map<String, String> fields = new HashMap<>();
+                for (Field field : memberIndex.membersOf(owner)) {
+                    if (field.type != null && field.origin != Field.Origin.ENUM_CONSTANT) {
+                        fields.put(field.name, field.type.substring(field.type.lastIndexOf('.') + 1));
+                    }
+                }
+                if (!fields.isEmpty()) {
+                    check(chunk.xpathExpressionList(), parsed.tokens(), fields, severity, out);
+                }
+            }
+        }
         for (int i = 0; i < node.getChildCount(); i++) {
-            scan(node.getChild(i), parsed, declared, classIndex, memberIndex, severity, out);
+            scan(node.getChild(i), parsed, declared, classIndex, memberIndex, outputs, severity, out);
         }
     }
 

@@ -184,6 +184,12 @@ final class DRLOOPathDefinitions {
         return path == null ? null : pathOwner(parsed, path, null, classes, outputs);
     }
 
+    /** Element type of the OOPath whose constraint brackets contain {@code token}, or {@code null}. */
+    static String enclosingPathOwner(ParsedDrl parsed, int token, ClassIndex classes, Set<Path> outputs) {
+        var path = enclosingPath(parsed.compilationUnit, token);
+        return path == null ? null : pathOwner(parsed, path, token, classes, outputs);
+    }
+
     private static String pathOwner(ParsedDrl parsed, DRL10Parser.XpathPrimaryContext path, Integer caret,
                                     ClassIndex classes, Set<Path> outputs) {
         String owner = DRLDefinitionHelper.resolveUnitFqcn(parsed, classes, outputs);
@@ -218,7 +224,9 @@ final class DRLOOPathDefinitions {
         if (node instanceof ParserRuleContext context && !contains(context, declaration)) return null;
         if (node instanceof DRL10Parser.LhsPatternBindContext binding) {
             if (binding.lhsPattern().size() != 1) return null;
-            return binding.lhsPattern(0).xpathPrimary();
+            var path = binding.lhsPattern(0).xpathPrimary();
+            // `$x: this.field` inside the brackets binds a field, not the path's element.
+            return path != null && contains(path, declaration) ? null : path;
         }
         for (int i = 0; i < node.getChildCount(); i++) {
             var found = boundPath(node.getChild(i), declaration);

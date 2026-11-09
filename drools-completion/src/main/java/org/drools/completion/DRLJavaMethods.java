@@ -32,6 +32,9 @@ public final class DRLJavaMethods {
         List<? extends Token> before = lexer.getAllTokens().stream().filter(t -> t.getChannel() == Token.DEFAULT_CHANNEL).toList();
         Integer token = parsed.tokenIndexAt(position);
         String implicit = token == null ? null : DRLCompletionHelper.findEnclosingPatternTypeName(parsed.compilationUnit, token);
+        // Inside an OOPath constraint there is no pattern type; the element type of the path plays that role.
+        String ooType = implicit != null || token == null || outputs.isEmpty() ? null
+                : DRLOOPathDefinitions.enclosingPathOwner(parsed, token, classes, outputs);
         List<String> chain = new ArrayList<>();
         if (!before.isEmpty() && before.get(before.size()-1).getText().equals(".")) {
             int index = before.size()-2;
@@ -48,11 +51,17 @@ public final class DRLJavaMethods {
         int firstHop = 1;
         if (chain.isEmpty()) {
             String target = modifyTargetType(before, text, start, parsed, document, openFiles, classes, outputs);
-            type = target != null ? target : implicit;
-        } else if (chain.get(0).equals("this")) type = implicit;
+            type = target != null ? target : implicit != null ? implicit : ooType;
+        } else if (chain.get(0).equals("this")) type = implicit != null ? implicit : ooType;
         else if (chain.get(0).startsWith("$")) {
             var declared = DRLWorkspaceTypeIndex.build(parsed.declaredTypes(), document, openFiles);
             type = LhsBindingResolver.resolveAt(text, start, declared).get(chain.get(0).substring(1));
+            if (type == null && !outputs.isEmpty()) {
+                // OOPath binding such as `$passport: /passports`.
+                Token head = before.get(before.size() - 2 - 2 * (chain.size() - 1));
+                type = DRLOOPathDefinitions.boundPathOwner(document.toUri().toString(), parsed,
+                        new Position(head.getLine() - 1, head.getCharPositionInLine()), chain.get(0), classes, outputs);
+            }
         } else {
             // A bare head is a property of the enclosing pattern's type when it names one, else a type name.
             type = chain.get(0);
@@ -63,11 +72,18 @@ public final class DRLJavaMethods {
                     type = implicit;
                     firstHop = 0;
                 }
+            } else if (ooType != null) {
+                Class<?> ooClass = members.resolveClass(ooType);
+                if (ooClass != null && propertyType(ooClass, chain.get(0)) != null) {
+                    type = ooType;
+                    firstHop = 0;
+                }
             }
         }
         if (type == null) return null;
         String fqcn = DRLCompletionHelper.resolveFqcn(type, type, parsed.compilationUnit, classes);
-        Class<?> owner = members.resolveClass(fqcn);
+        Class<?> owner = fqcn == null ? null : members.resolveClass(fqcn);
+        if (owner == null && type.indexOf('.') > 0) owner = members.resolveClass(type);
         for (int i = firstHop; owner != null && i < chain.size(); i++) owner = propertyType(owner, chain.get(i));
         return owner;
     }

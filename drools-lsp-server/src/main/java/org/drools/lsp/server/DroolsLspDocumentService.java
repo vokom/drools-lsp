@@ -263,7 +263,7 @@ public class DroolsLspDocumentService implements TextDocumentService {
             logger.log(Level.WARNING, "Unresolved-name lint failed for " + uri, e);
         }
         try {
-            diagnostics.addAll(org.drools.completion.DRLTypeMismatch.diagnostics(text, classIndex, classMemberIndex));
+            diagnostics.addAll(org.drools.completion.DRLTypeMismatch.diagnostics(text, classIndex, classMemberIndex, server.getClasspathEntries()));
         } catch (Exception e) {
             logger.log(Level.WARNING, "Type-mismatch lint failed for " + uri, e);
         }

@@ -68,6 +68,7 @@ JVM properties available before `-jar` include:
 | `drools.lsp.lint.mvelPropertyAccess` | Property access style hint, default `off` |
 | `drools.lsp.lint.unusedBindings` | Severity of "binding is never used" findings, default `hint`; tagged `Unnecessary` so clients grey them out. `off` disables |
 | `drools.lsp.lint.typeMismatch` | Severity of a field compared with a literal of another kind (a number field against a string, and so on), default `warning`. Drools coerces these at run time, so the engine reports no build error. `off` disables |
+| `drools.lsp.lint.unresolvedNames` | Severity of a `$binding` or unqualified call in a Java-dialect consequence that nothing declares (a misspelled `$passport2` or `hell2o(...)`), default `error`. The engine reports the same mistakes only after a save and project build. `off` disables |
 | `drools.lsp.inlayHints.enabled` | Binding type hints |
 
 Severity values are `off`, `hint`, `info`, `warning`, `error`. Deprecated syntax
