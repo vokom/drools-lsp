@@ -46,7 +46,11 @@ final class BuildMessageRanges {
     private static final Pattern QUOTED_TOKEN = Pattern.compile("'([^']+)'");
     private static final List<Pattern> UNQUOTED_EXPRESSION_PATTERNS = List.of(
             Pattern.compile("(?i)Unable to Analy[sz]e Expression\\s+(.+?):\\s"),
-            Pattern.compile("\\[Near\\s*:\\s*\\{\\.\\.\\.(.+?)\\.\\.\\.+\\}\\]", Pattern.DOTALL));
+            Pattern.compile("\\[Near\\s*:\\s*\\{\\.\\.\\.(.+?)\\.\\.\\.+\\}\\]", Pattern.DOTALL),
+            // Java compiler messages about a consequence name the identifier without quotes.
+            Pattern.compile("The method (\\w+)\\("),
+            Pattern.compile("(\\$?\\w+) cannot be resolved"),
+            Pattern.compile("The (?:local )?variable (\\$?\\w+)"));
     private static final Pattern RULE_NAME = Pattern.compile("Rule name='([^']+)'");
 
     private BuildMessageRanges() {

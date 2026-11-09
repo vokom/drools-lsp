@@ -163,4 +163,17 @@ class BuildMessageRangesTest {
         assertThat(range.getStart().getCharacter()).isEqualTo(24);
         assertThat(range.getEnd().getCharacter()).isEqualTo(32);
     }
+
+    @Test
+    void consequenceCompilerMessagesPointAtTheIdentifierNotTheRuleHeader() {
+        String drl = "package p;\nrule \"R\"\nwhen\n  $p : Object()\nthen\n  System.out.println($p + $p2);\n  hell2o(\"z\");\nend\n";
+        org.eclipse.lsp4j.Range method = BuildMessageRanges.rangeFor(
+                "Rule Compilation error The method hell2o(String) is undefined for the type Rule_R123", 2, 0, drl);
+        assertThat(method.getStart().getLine()).isEqualTo(6);
+        assertThat(method.getStart().getCharacter()).isEqualTo(2);
+        org.eclipse.lsp4j.Range variable = BuildMessageRanges.rangeFor(
+                "Rule Compilation error $p2 cannot be resolved to a variable", 2, 0, drl);
+        assertThat(variable.getStart().getLine()).isEqualTo(5);
+        assertThat(variable.getStart().getCharacter()).isEqualTo(26);
+    }
 }
