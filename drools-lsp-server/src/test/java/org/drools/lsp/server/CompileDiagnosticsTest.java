@@ -171,6 +171,39 @@ class CompileDiagnosticsTest {
     }
 
     @Test
+    void openCompilesWithoutASave(@TempDir Path tmp) throws Exception {
+        Path drl = write(tmp, "A.drl", BROKEN_TYPE);
+        Fixture f = fixture(shared());
+
+        open(f.service(), drl, BROKEN_TYPE);
+
+        awaitUntil(() -> !f.compile().cachedFor(drl).isEmpty());
+    }
+
+    @Test
+    void documentOpenedBeforeTheEngineArrivesCompilesOnArrival(@TempDir Path tmp) throws Exception {
+        Path drl = write(tmp, "A.drl", BROKEN_TYPE);
+        Fixture f = fixture(new Engine() {
+            public boolean available() {
+                return false;
+            }
+
+            public List<Map<String, Object>> build(Map<String, String> drlByPath, java.time.Duration timeout) {
+                return List.of();
+            }
+
+            public void close() {
+            }
+        });
+        open(f.service(), drl, BROKEN_TYPE);
+        assertThat(f.compile().cachedFor(drl)).isEmpty();
+
+        f.compile().setEngine(shared());
+
+        awaitUntil(() -> !f.compile().cachedFor(drl).isEmpty());
+    }
+
+    @Test
     void editDropsTheCachedResult(@TempDir Path tmp) throws Exception {
         Path drl = write(tmp, "A.drl", BROKEN_TYPE);
         Fixture f = fixture(shared());
@@ -721,13 +754,14 @@ class CompileDiagnosticsTest {
         f.server().setClasspathEntriesForTest(Set.of(output));
         f.compile().setEngine(engine);
         open(f.service(), source, VALID);
+        awaitUntil(() -> compiledFileCounts.size() == 1);
 
         f.service().didSave(new DidSaveTextDocumentParams(new TextDocumentIdentifier(uri(source))));
-        awaitUntil(() -> compiledFileCounts.size() == 1);
-        f.compile().rebuildWorkspace(source);
         awaitUntil(() -> compiledFileCounts.size() == 2);
+        f.compile().rebuildWorkspace(source);
+        awaitUntil(() -> compiledFileCounts.size() == 3);
 
-        assertThat(compiledFileCounts).containsExactly(1, 1);
+        assertThat(compiledFileCounts).containsExactly(1, 1, 1);
     }
 
     @Test

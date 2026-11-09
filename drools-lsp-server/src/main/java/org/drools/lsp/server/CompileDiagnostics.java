@@ -91,10 +91,16 @@ final class CompileDiagnostics {
     private final AtomicReference<Engine> engine = new AtomicReference<>();
     private final AtomicBoolean notBuiltNoticeShown = new AtomicBoolean(false);
     private final AtomicLong regroupGeneration = new AtomicLong();
+    private volatile java.util.function.Supplier<Map<Path, String>> openDocuments = Map::of;
 
     CompileDiagnostics(DroolsLspServer server, Function<Path, String> openText) {
         this.server = server;
         this.openText = openText;
+    }
+
+    /** Source of the currently open documents, compiled once the engine becomes available. */
+    void setOpenDocuments(java.util.function.Supplier<Map<Path, String>> openDocuments) {
+        this.openDocuments = openDocuments;
     }
 
     boolean onSave() {
@@ -133,6 +139,11 @@ final class CompileDiagnostics {
         if (previous != null && previous != next) {
             buildExecutor.submit(previous::close);
         }
+        if (next.available() && onSave && (previous == null || !previous.available())) {
+            // The engine arrives 10 to 40 seconds after connect; documents opened
+            // meanwhile would otherwise wait for a save to get compile errors.
+            openDocuments.get().forEach((path, text) -> trigger(path, text, false));
+        }
     }
 
     /** Releases the engine and stops both executors; the close runs after any build in flight. */
@@ -162,6 +173,14 @@ final class CompileDiagnostics {
 
     void onDidSave(Path path, String text) {
         if (!onSave || path == null || text == null) {
+            return;
+        }
+        trigger(path, text, false);
+    }
+
+    /** Compiles a freshly opened document so its errors show without a save. */
+    void onDidOpen(Path path, String text) {
+        if (!onSave || path == null || text == null || cached.containsKey(normalize(path))) {
             return;
         }
         trigger(path, text, false);

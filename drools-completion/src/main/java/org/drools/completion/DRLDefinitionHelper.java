@@ -173,9 +173,9 @@ public final class DRLDefinitionHelper {
     }
 
     /**
-     * The source directory of the package named by the qualified name in a {@code package} or
+     * The {@code package-info.java} of the package named by the qualified name in a {@code package} or
      * {@code import} line, up to and including the clicked segment. Empty when the caret is not on a
-     * package segment or no indexed class belongs to that package.
+     * package segment, no indexed class belongs to that package, or it has no package-info.java.
      */
     private static List<Location> packageDefinition(String text, Position position, String word,
                                                     ClassIndex classIndex, Set<Path> outputs) {
@@ -205,8 +205,10 @@ public final class DRLDefinitionHelper {
             int extra = fqcn.substring(packageName.length() + 1).split("\\.").length;
             dir = dir.getParent();
             for (int i = 1; i < extra && dir != null; i++) dir = dir.getParent();
-            if (dir != null) {
-                return List.of(new Location(dir.toUri().toString(), new Range(new Position(0, 0), new Position(0, 0))));
+            // IntelliJ cannot open a directory URI; navigate only where a package-info.java exists.
+            Path info = dir == null ? null : dir.resolve("package-info.java");
+            if (info != null && java.nio.file.Files.isRegularFile(info)) {
+                return List.of(new Location(info.toUri().toString(), new Range(new Position(0, 0), new Position(0, 0))));
             }
         }
         return List.of();

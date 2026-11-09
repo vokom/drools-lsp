@@ -124,6 +124,7 @@ public class DroolsLspDocumentService implements TextDocumentService {
     public DroolsLspDocumentService(DroolsLspServer server) {
         this.server = server;
         this.compileDiagnostics = new CompileDiagnostics(server, this::openTextAt);
+        this.compileDiagnostics.setOpenDocuments(() -> Map.copyOf(openTextByPath));
         // Lets binding resolution describe types the DRL does not declare, so
         // hover and inlay hints work on Java fact classes. The closure reads the
         // live indexes on every call, so a rebuilt classpath needs no re-install.
@@ -233,7 +234,9 @@ public class DroolsLspDocumentService implements TextDocumentService {
     @Override
     public synchronized void didOpen(DidOpenTextDocumentParams params) {
         if (server.isClosed()) return;
-        putSource(params.getTextDocument().getUri(), params.getTextDocument().getText());
+        String uri = params.getTextDocument().getUri();
+        putSource(uri, params.getTextDocument().getText());
+        compileDiagnostics.onDidOpen(toPath(uri), params.getTextDocument().getText());
     }
 
     /**
