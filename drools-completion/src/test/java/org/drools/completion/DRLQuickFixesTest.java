@@ -90,6 +90,30 @@ class DRLQuickFixesTest {
     }
 
     @Test
+    void indexedClassNamedLikeAJavaLangTypeIsNotAMissingImport() {
+        ClassIndex index = ClassIndex.of(Map.of("Number", List.of("com.acme.Number")));
+        String text = "package p;\nrule R\nwhen\n  $n : Number() from accumulate( $x : Object(), count($x) )\nthen\nend\n";
+        assertThat(withCode(DRLLintHelper.lintUnknownTypes(text, ParsedDrl.of(text).compilationUnit, null, Map.of(),
+                index, ClassMemberIndex.of(Set.of()), true), DRLLintHelper.MISSING_IMPORT)).isEmpty();
+    }
+
+    @Test
+    void jdkWildcardImportCoversANameAnIndexedClassAlsoHas() {
+        ClassIndex index = ClassIndex.of(Map.of("List", List.of("org.dep.List")));
+        String text = "package p;\nimport java.util.*;\nrule R\nwhen\n  $l : List() from collect( Object() )\nthen\nend\n";
+        assertThat(withCode(DRLLintHelper.lintUnknownTypes(text, ParsedDrl.of(text).compilationUnit, null, Map.of(),
+                index, ClassMemberIndex.of(Set.of()), true), DRLLintHelper.MISSING_IMPORT)).isEmpty();
+    }
+
+    @Test
+    void missingImportWaitsForTheClasspath() {
+        String text = "package p;\nimport org.dep.*;\nrule R\nwhen\n  Person()\nthen\nend\n";
+        assertThat(DRLLintHelper.lintUnknownTypes(text, ParsedDrl.of(text).compilationUnit, null, Map.of(),
+                INDEX, ClassMemberIndex.of(Set.of()), false)).isEmpty();
+        assertThat(withCode(typeDiagnostics(text), DRLLintHelper.MISSING_IMPORT)).hasSize(1);
+    }
+
+    @Test
     void unusedAndDuplicateImportsRemoveTheirWholeLine() {
         String text = "package p;\nimport p.model.Person;\nimport java.util.Map;\nimport p.model.Person;\nrule R\nwhen\n  Person()\nthen\nend\n";
         List<Diagnostic> all = new ArrayList<>(DRLStructureLint.diagnostics(text));
@@ -134,6 +158,14 @@ class DRLQuickFixesTest {
         List<Diagnostic> missing = withCode(DRLLintHelper.lint(text), DRLLintHelper.MISSING_SEMICOLON);
         assertThat(missing).hasSize(1);
         assertThat(fixOnce(text, missing)).contains("  update($p);\nend");
+    }
+
+    @Test
+    void missingSemicolonGoesBeforeATrailingComment() {
+        String text = "rule R\nwhen\n  $p : Person()\nthen\n  update($p) // done\nend\n";
+        List<Diagnostic> missing = withCode(DRLLintHelper.lint(text), DRLLintHelper.MISSING_SEMICOLON);
+        assertThat(missing).hasSize(1);
+        assertThat(fixOnce(text, missing)).contains("  update($p); // done\nend");
     }
 
     // ── bindings ──

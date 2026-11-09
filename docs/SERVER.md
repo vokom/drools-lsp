@@ -64,7 +64,7 @@ JVM properties available before `-jar` include:
 | `drools.lsp.java.sourcePaths` | Additional Java source roots, separated by `;` |
 | `drools.lsp.java.packageFilters` | Java source package prefixes, separated by `;` |
 | `drools.lsp.lint.deprecated` | Severity of deprecated syntax findings, default `warning` |
-| `drools.lsp.lint.missingEnd`, `missingSeparator`, `missingSemicolon`, `unbalancedParens`, `unknownTypes` | Existing lint severity controls; `unknownTypes` also covers `global` declaration types, and reports `missing-import` when a type exists on the classpath but is not imported, wildcard-imported, in the rule's package or in `java.lang` |
+| `drools.lsp.lint.missingEnd`, `missingSeparator`, `missingSemicolon`, `unbalancedParens`, `unknownTypes` | Existing lint severity controls; `unknownTypes` also covers `global` declaration types, and reports `missing-import` when a type exists on the classpath but is not imported, wildcard-imported, in the rule's package or in `java.lang`. Imports from same-package siblings count, and a name that `java.lang` or a wildcard-imported JDK or classpath package provides is in scope. The check runs only after the dependency classpath resolves |
 | `drools.lsp.lint.mvelPropertyAccess` | Property access style hint, default `off` |
 | `drools.lsp.lint.duplicateRuleNames` | Severity of a rule name repeated within a file, default `warning`. `off` disables |
 | `drools.lsp.lint.duplicateImports` | Severity of a repeated import, default `warning`; tagged `Unnecessary`. `off` disables |

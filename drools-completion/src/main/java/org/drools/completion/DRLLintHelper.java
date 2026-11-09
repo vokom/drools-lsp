@@ -1079,7 +1079,9 @@ public final class DRLLintHelper {
         if (fqcn != null) {
             // Resolution falls back to any indexed class with this simple name, but
             // Drools only sees imported, same-package and java.lang types.
-            if (trimmed.equals(simple) && !inScope(fqcn, cu, extraImports)) {
+            // Only judged once the classpath has resolved: before that a dependency
+            // wildcard import cannot be confirmed to provide the name.
+            if (classpathResolved && trimmed.equals(simple) && !inScope(fqcn, simple, cu, extraImports, classIndex)) {
                 out.add(makeMissingImportWarning(simple, fqcn, range, severity));
             }
             return;
@@ -1115,18 +1117,44 @@ public final class DRLLintHelper {
     /** Code of a type that exists on the classpath but is neither imported nor in scope; its data is the FQCN. */
     public static final String MISSING_IMPORT = "missing-import";
 
-    /** Whether Drools sees {@code fqcn} without a qualified name: imported, wildcard-imported, same package or java.lang. */
-    private static boolean inScope(String fqcn, DRL10Parser.CompilationUnitContext cu, Collection<String> extraImports) {
+    /**
+     * Whether Drools sees {@code simple} without a qualified name. Resolution picked
+     * {@code fqcn} from the class index, which holds no JDK classes, so the name also
+     * counts as in scope when {@code java.lang} or any wildcard-imported package
+     * provides it: the index's pick may be a different class with the same name.
+     */
+    private static boolean inScope(String fqcn, String simple, DRL10Parser.CompilationUnitContext cu,
+                                   Collection<String> extraImports, ClassIndex classIndex) {
         int dot = fqcn.lastIndexOf('.');
         String pkg = dot < 0 ? "" : fqcn.substring(0, dot);
-        if (pkg.equals("java.lang") || pkg.equals(DRLDeclaredTypeParser.extractPackageName(cu))) {
+        if (pkg.equals(DRLDeclaredTypeParser.extractPackageName(cu)) || jdkLoadable("java.lang." + simple)) {
             return true;
         }
         Set<String> imports = new HashSet<>(DRLCompletionHelper.extractImports(cu));
         if (extraImports != null) {
             imports.addAll(extraImports);
         }
-        return imports.contains(fqcn) || imports.contains(pkg + ".*");
+        if (imports.contains(fqcn)) {
+            return true;
+        }
+        for (String imported : imports) {
+            if (imported.endsWith(".*")) {
+                String candidate = imported.substring(0, imported.length() - 1) + simple;
+                if (classIndex.forSimpleName(simple).contains(candidate) || jdkLoadable(candidate)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean jdkLoadable(String fqcn) {
+        try {
+            Class.forName(fqcn, false, ClassLoader.getPlatformClassLoader());
+            return true;
+        } catch (ClassNotFoundException | LinkageError e) {
+            return false;
+        }
     }
 
     private static Diagnostic makeMissingImportWarning(String simple, String fqcn, Range range,

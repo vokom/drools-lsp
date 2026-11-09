@@ -564,7 +564,14 @@ class DroolsLspDocumentServiceTest {
                 + "rule \"R\"\n  when\n  then\nend\n";
         DroolsLspDocumentService service = getDroolsLspDocumentService(drl);
         service.setClassIndex(ClassIndex.of(Map.of("Person", List.of("demo.model.Person"))));
-        List<Diagnostic> diagnostics = service.validate("myDocument");
+        List<Diagnostic> diagnostics = new java.util.ArrayList<>(service.validate("myDocument"));
+        // missing-import waits for the dependency classpath, which this service never resolves; a
+        // client echoes it back the same way.
+        Diagnostic missing = new Diagnostic(new Range(new Position(4, 9), new Position(4, 15)), "not imported");
+        missing.setSource("drools-type");
+        missing.setCode("missing-import");
+        missing.setData("demo.model.Person");
+        diagnostics.add(missing);
 
         CodeActionParams params = new CodeActionParams(new TextDocumentIdentifier("myDocument"),
                 new Range(new Position(0, 0), new Position(12, 0)), new CodeActionContext(diagnostics));
