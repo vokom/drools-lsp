@@ -99,6 +99,19 @@ class DRLStructureLintTest {
     }
 
     @Test
+    void importUsedOnlyInAnInlineCastIsUsed() {
+        String drl = "package p;\nimport p.model.Person;\nimport p.model.LongAddress;\nimport p.model.Abroad;\n"
+                + "rule R\nwhen\n  Person( address#LongAddress.country == \"uk\" )\n  $p : /people/addresses#Abroad\nthen\nend\n";
+        assertThat(unused(drl)).isEmpty();
+    }
+
+    @Test
+    void hashCommentStillHidesAName() {
+        String drl = "package p;\nimport p.model.Person;\nrule R\nwhen\nthen\n  # Person\nend\n";
+        assertThat(unused(drl)).hasSize(1);
+    }
+
+    @Test
     void wildcardStaticAndFunctionImportsAreNotJudged() {
         String drl = "package p;\nimport p.model.*;\nimport static p.Util.helper;\nimport function p.Util.f;\nrule R\nwhen\nthen\nend\n";
         assertThat(unused(drl)).isEmpty();

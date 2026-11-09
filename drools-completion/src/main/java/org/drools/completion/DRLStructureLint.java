@@ -124,23 +124,39 @@ public final class DRLStructureLint {
         }
         String sanitized = DRLLintHelper.sanitize(text);
         List<ImportStatement> imports = imports(sanitized);
+        if (imports.stream().allMatch(imp -> imp.modifier != null || imp.wildcard())) {
+            return out;
+        }
+        // Same-package siblings come from the cached file info; only those are read as text.
         String ownPackage = DRLDeclaredTypeParser.parseFileInfo(text).packageName;
-        List<String> siblingTexts = new ArrayList<>();
-        DRLWorkspaceTypeIndex.forEachSiblingFile(documentPath, openFiles, (uri, siblingText) -> {
-            if (ownPackage.equals(DRLDeclaredTypeParser.parseFileInfo(siblingText).packageName)) {
-                siblingTexts.add(DRLLintHelper.sanitize(siblingText));
+        Set<String> samePackage = new HashSet<>();
+        DRLWorkspaceTypeIndex.forEachSiblingInfo(documentPath, openFiles, (info, uri) -> {
+            if (ownPackage.equals(info.packageName)) {
+                samePackage.add(uri);
             }
         });
-        String withoutImports = blankImports(sanitized, imports);
+        List<String[]> scopes = new ArrayList<>();
+        scopes.add(useScopes(text, sanitized, imports));
+        if (!samePackage.isEmpty()) {
+            DRLWorkspaceTypeIndex.forEachSiblingFile(documentPath, openFiles, (uri, siblingText) -> {
+                if (samePackage.contains(uri)) {
+                    String siblingSanitized = DRLLintHelper.sanitize(siblingText);
+                    scopes.add(useScopes(siblingText, siblingSanitized, imports(siblingSanitized)));
+                }
+            });
+        }
         for (ImportStatement imp : imports) {
             if (imp.modifier != null || imp.wildcard() || out.size() >= MAX_PER_PASS) {
                 continue;
             }
-            Pattern use = Pattern.compile("(?<![\\w$])" + Pattern.quote(imp.simpleName()) + "(?![\\w$])");
-            boolean used = use.matcher(withoutImports).find();
-            for (int i = 0; !used && i < siblingTexts.size(); i++) {
-                String sibling = siblingTexts.get(i);
-                used = use.matcher(blankImports(sibling, imports(sibling))).find();
+            String simple = Pattern.quote(imp.simpleName());
+            Pattern use = Pattern.compile("(?<![\\w$])" + simple + "(?![\\w$])");
+            // An inline cast (address#LongAddress, /addresses#Abroad) follows a name or bracket
+            // directly; sanitize blanks it as a '#' comment, so it is matched in the original text.
+            Pattern cast = Pattern.compile("(?<=[\\w$)\\]])#\\s*" + simple + "(?![\\w$])");
+            boolean used = false;
+            for (int i = 0; !used && i < scopes.size(); i++) {
+                used = use.matcher(scopes.get(i)[0]).find() || cast.matcher(scopes.get(i)[1]).find();
             }
             if (!used) {
                 Diagnostic d = diagnostic(sanitized, imp.start, imp.end,
@@ -290,8 +306,17 @@ public final class DRLStructureLint {
         return out;
     }
 
-    private static String blankImports(String sanitized, List<ImportStatement> imports) {
-        char[] chars = sanitized.toCharArray();
+    /**
+     * The texts in which an import counts as used: the sanitized text and the
+     * original text (for inline casts), both with import and package lines blanked.
+     * Sanitizing preserves offsets, so the same import spans apply to both.
+     */
+    private static String[] useScopes(String text, String sanitized, List<ImportStatement> imports) {
+        return new String[]{blankImports(sanitized, sanitized, imports), blankImports(text, sanitized, imports)};
+    }
+
+    private static String blankImports(String text, String sanitized, List<ImportStatement> imports) {
+        char[] chars = text.toCharArray();
         for (ImportStatement imp : imports) {
             for (int i = imp.start; i < imp.end; i++) {
                 if (chars[i] != '\n' && chars[i] != '\r') {
