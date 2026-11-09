@@ -897,7 +897,8 @@ public class DRLCompletionHelper {
         Set<String> importedFqcns = extractImports(compilationUnit);
         List<String> matchingFqcns = classIndex.getMatching(prefix);
         List<CompletionItem> items = new ArrayList<>();
-        List<String> siblingImports = text == null ? List.of() : samePackageSiblingImports(compilationUnit, documentPath, openFiles);
+        DRLLintHelper.TypeScope scope = text == null ? null
+                : new DRLLintHelper.TypeScope(compilationUnit, samePackageSiblingImports(compilationUnit, documentPath, openFiles), classIndex);
         TextEdit importAt = null;
 
         for (String fqcn : matchingFqcns) {
@@ -908,7 +909,7 @@ public class DRLCompletionHelper {
             item.setKind(CompletionItemKind.Class);
             item.setInsertText(simpleName);
             if (text != null && fqcn.indexOf('.') > 0) {
-                String scoped = DRLLintHelper.scopedFqcn(simpleName, compilationUnit, siblingImports, classIndex);
+                String scoped = scope.resolve(simpleName);
                 if (scoped == null) {
                     if (importAt == null) {
                         importAt = DRLQuickFixes.importEdit(text, "");

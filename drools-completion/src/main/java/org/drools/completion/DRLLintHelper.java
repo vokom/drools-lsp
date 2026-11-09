@@ -27,6 +27,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -1130,46 +1131,82 @@ public final class DRLLintHelper {
 
     /**
      * The class {@code simple} names in a DRL document without qualification, or
-     * {@code null} when none is in scope. Java's precedence applies: a single-type
-     * import (this file's or a same-package sibling's in {@code extraImports}),
-     * then a class of the document's own package, then a wildcard-imported
-     * package, then {@code java.lang}. JDK classes are checked through the
-     * platform class loader, since the class index holds none.
+     * {@code null} when none is in scope. See {@link TypeScope}.
      */
     static String scopedFqcn(String simple, DRL10Parser.CompilationUnitContext cu,
                              Collection<String> extraImports, ClassIndex classIndex) {
-        Set<String> imports = new HashSet<>(DRLCompletionHelper.extractImports(cu));
-        if (extraImports != null) {
-            imports.addAll(extraImports);
-        }
-        for (String imported : imports) {
-            if (!imported.endsWith(".*") && imported.endsWith("." + simple)) {
-                return imported;
+        return new TypeScope(cu, extraImports, classIndex).resolve(simple);
+    }
+
+    /**
+     * What simple type names mean in one DRL document, resolved with Java's
+     * precedence: a single-type import (this file's or a same-package sibling's),
+     * then a class of the document's own package, then a wildcard-imported
+     * package, then {@code java.lang}. JDK classes are checked through the
+     * platform class loader, since the class index holds none. Imports are read
+     * once and each name is resolved once, so callers that ask about many names
+     * (class completion over the whole index) stay cheap.
+     */
+    static final class TypeScope {
+        private final List<String> singleImports = new ArrayList<>();
+        private final List<String> wildcardPackages = new ArrayList<>();
+        private final String ownPackage;
+        private final ClassIndex classIndex;
+        private final Map<String, Optional<String>> resolved = new HashMap<>();
+
+        TypeScope(DRL10Parser.CompilationUnitContext cu, Collection<String> extraImports, ClassIndex classIndex) {
+            Set<String> imports = new HashSet<>(DRLCompletionHelper.extractImports(cu));
+            if (extraImports != null) {
+                imports.addAll(extraImports);
             }
+            for (String imported : imports) {
+                if (imported.endsWith(".*")) {
+                    wildcardPackages.add(imported.substring(0, imported.length() - 1));
+                } else {
+                    singleImports.add(imported);
+                }
+            }
+            this.ownPackage = DRLDeclaredTypeParser.extractPackageName(cu);
+            this.classIndex = classIndex;
         }
-        String ownPackage = DRLDeclaredTypeParser.extractPackageName(cu);
-        String samePackage = ownPackage.isEmpty() ? simple : ownPackage + "." + simple;
-        if (classIndex.forSimpleName(simple).contains(samePackage)) {
-            return samePackage;
+
+        String resolve(String simple) {
+            return resolved.computeIfAbsent(simple, s -> Optional.ofNullable(lookup(s))).orElse(null);
         }
-        for (String imported : imports) {
-            if (imported.endsWith(".*")) {
-                String candidate = imported.substring(0, imported.length() - 1) + simple;
-                if (classIndex.forSimpleName(simple).contains(candidate) || jdkLoadable(candidate)) {
+
+        private String lookup(String simple) {
+            for (String imported : singleImports) {
+                if (imported.endsWith("." + simple)) {
+                    return imported;
+                }
+            }
+            List<String> indexed = classIndex.forSimpleName(simple);
+            String samePackage = ownPackage.isEmpty() ? simple : ownPackage + "." + simple;
+            if (indexed.contains(samePackage)) {
+                return samePackage;
+            }
+            for (String pkg : wildcardPackages) {
+                String candidate = pkg + simple;
+                if (indexed.contains(candidate) || jdkLoadable(candidate)) {
                     return candidate;
                 }
             }
+            return jdkLoadable("java.lang." + simple) ? "java.lang." + simple : null;
         }
-        return jdkLoadable("java.lang." + simple) ? "java.lang." + simple : null;
     }
 
+    /** JDK lookups by FQCN; the platform classes never change while the server runs. */
+    private static final Map<String, Boolean> JDK_CLASSES = new java.util.concurrent.ConcurrentHashMap<>();
+
     private static boolean jdkLoadable(String fqcn) {
-        try {
-            Class.forName(fqcn, false, ClassLoader.getPlatformClassLoader());
-            return true;
-        } catch (ClassNotFoundException | LinkageError e) {
-            return false;
-        }
+        return JDK_CLASSES.computeIfAbsent(fqcn, name -> {
+            try {
+                Class.forName(name, false, ClassLoader.getPlatformClassLoader());
+                return true;
+            } catch (ClassNotFoundException | LinkageError e) {
+                return false;
+            }
+        });
     }
 
     private static Diagnostic makeMissingImportWarning(String simple, String fqcn, Range range,
