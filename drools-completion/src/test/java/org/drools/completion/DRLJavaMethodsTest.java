@@ -110,4 +110,11 @@ class DRLJavaMethodsTest {
             assertThat(line.substring(location.getRange().getStart().getCharacter(),location.getRange().getEnd().getCharacter())).isEqualTo("println");
         }
     }
+
+    @Test
+    void propertyTypeFollowsPublicGettersAsWellAsFields() {
+        assertThat(DRLJavaMethods.propertyType(java.time.LocalDate.class, "year")).isEqualTo(int.class);
+        assertThat(DRLJavaMethods.propertyType(java.time.LocalDate.class, "leapYear")).isEqualTo(boolean.class);
+        assertThat(DRLJavaMethods.propertyType(java.time.LocalDate.class, "nothing")).isNull();
+    }
 }

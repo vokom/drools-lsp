@@ -74,6 +74,13 @@ public final class DRLHoverHelper {
     public static Hover hover(String text, Position position, ClassIndex classIndex,
                               ClassMemberIndex memberIndex, Path documentPath,
                               Map<Path, String> openFiles) {
+        return hover(text, position, classIndex, memberIndex, documentPath, openFiles, java.util.Set.of());
+    }
+
+    /** As above, with the build output directories used to resolve rule-unit data sources. */
+    public static Hover hover(String text, Position position, ClassIndex classIndex,
+                              ClassMemberIndex memberIndex, Path documentPath,
+                              Map<Path, String> openFiles, java.util.Set<Path> buildOutputDirs) {
         if (text == null || position == null) {
             return null;
         }
@@ -92,7 +99,7 @@ public final class DRLHoverHelper {
         Map<String, DeclaredType> typeIndex =
                 DRLWorkspaceTypeIndex.build(currentDocTypes, documentPath, openFiles);
 
-        Hover method = methodHover(word, text, position, parsed, classIndex, memberIndex, documentPath, openFiles);
+        Hover method = methodHover(word, text, position, parsed, classIndex, memberIndex, documentPath, openFiles, buildOutputDirs);
         if (method != null) {
             return method;
         }
@@ -746,7 +753,7 @@ public final class DRLHoverHelper {
      */
     private static Hover methodHover(String word, String text, Position position, ParsedDrl parsed,
                                      ClassIndex classIndex, ClassMemberIndex memberIndex,
-                                     Path documentPath, Map<Path, String> openFiles) {
+                                     Path documentPath, Map<Path, String> openFiles, java.util.Set<Path> buildOutputDirs) {
         if (Character.isUpperCase(word.charAt(0)) || word.startsWith("$")) {
             return null;
         }
@@ -764,7 +771,7 @@ public final class DRLHoverHelper {
         Class<?> receiver;
         try {
             receiver = DRLJavaMethods.receiver(text, position, parsed, classIndex, memberIndex,
-                    documentPath, openFiles);
+                    documentPath, openFiles, buildOutputDirs);
         } catch (RuntimeException e) {
             return null;
         }

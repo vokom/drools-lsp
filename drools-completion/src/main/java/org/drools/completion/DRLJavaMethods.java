@@ -45,6 +45,7 @@ public final class DRLJavaMethods {
             if (chain.isEmpty()) return null;
         }
         String type;
+        int firstHop = 1;
         if (chain.isEmpty()) {
             String target = modifyTargetType(before, text, start, parsed, document, openFiles, classes, outputs);
             type = target != null ? target : implicit;
@@ -52,14 +53,37 @@ public final class DRLJavaMethods {
         else if (chain.get(0).startsWith("$")) {
             var declared = DRLWorkspaceTypeIndex.build(parsed.declaredTypes(), document, openFiles);
             type = LhsBindingResolver.resolveAt(text, start, declared).get(chain.get(0).substring(1));
-        } else type = chain.get(0);
+        } else {
+            // A bare head is a property of the enclosing pattern's type when it names one, else a type name.
+            type = chain.get(0);
+            if (implicit != null) {
+                Class<?> implicitClass = members.resolveClass(
+                        DRLCompletionHelper.resolveFqcn(implicit, implicit, parsed.compilationUnit, classes));
+                if (implicitClass != null && propertyType(implicitClass, chain.get(0)) != null) {
+                    type = implicit;
+                    firstHop = 0;
+                }
+            }
+        }
         if (type == null) return null;
         String fqcn = DRLCompletionHelper.resolveFqcn(type, type, parsed.compilationUnit, classes);
         Class<?> owner = members.resolveClass(fqcn);
-        try {
-            for (int i=1; owner != null && i<chain.size(); i++) owner = owner.getField(chain.get(i)).getType();
-        } catch (ReflectiveOperationException | LinkageError e) { return null; }
+        for (int i = firstHop; owner != null && i < chain.size(); i++) owner = propertyType(owner, chain.get(i));
         return owner;
+    }
+
+    /** Type of the public field, or of the getter ({@code getX}, {@code isX} or {@code x}), named {@code name}; else {@code null}. */
+    static Class<?> propertyType(Class<?> owner, String name) {
+        try {
+            return owner.getField(name).getType();
+        } catch (ReflectiveOperationException | LinkageError ignored) { }
+        String capital = Character.toUpperCase(name.charAt(0)) + name.substring(1);
+        for (String getter : new String[] {"get" + capital, "is" + capital, name}) {
+            try {
+                return owner.getMethod(getter).getReturnType();
+            } catch (ReflectiveOperationException | LinkageError ignored) { }
+        }
+        return null;
     }
 
     /**

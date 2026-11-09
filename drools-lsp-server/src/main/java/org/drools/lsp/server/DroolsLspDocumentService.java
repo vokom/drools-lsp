@@ -334,7 +334,7 @@ public class DroolsLspDocumentService implements TextDocumentService {
 
         Position caretPosition = completionParams.getPosition();
         Path documentPath = toPath(uri);
-        List<CompletionItem> completionItems = DRLCompletionHelper.getCompletionItems(text, caretPosition, server.getClient(), classIndex, classMemberIndex, documentPath, openSiblings(documentPath));
+        List<CompletionItem> completionItems = DRLCompletionHelper.getCompletionItems(text, caretPosition, server.getClient(), classIndex, classMemberIndex, documentPath, openSiblings(documentPath), server.getBuildOutputDirs());
 
         logger.fine("Position=" + caretPosition);
         logger.fine("completionItems = " + completionItems);
@@ -408,7 +408,7 @@ public class DroolsLspDocumentService implements TextDocumentService {
             Path documentPath = toPath(uri);
             return attempt(() -> DRLHoverHelper.hover(
                     text, params.getPosition(), classIndex, classMemberIndex, documentPath,
-                    openSiblings(documentPath)));
+                    openSiblings(documentPath), server.getBuildOutputDirs()));
         });
     }
 

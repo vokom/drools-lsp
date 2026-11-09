@@ -122,6 +122,11 @@ public class DRLCompletionHelper {
      *                  edits; may be empty
      */
     public static List<CompletionItem> getCompletionItems(String text, Position caretPosition, LanguageClient client, ClassIndex classIndex, ClassMemberIndex memberIndex, Path documentPath, Map<Path, String> openFiles) {
+        return getCompletionItems(text, caretPosition, client, classIndex, memberIndex, documentPath, openFiles, Set.of());
+    }
+
+    /** As above, with the project's build output directories for resolving rule-unit data sources. */
+    public static List<CompletionItem> getCompletionItems(String text, Position caretPosition, LanguageClient client, ClassIndex classIndex, ClassMemberIndex memberIndex, Path documentPath, Map<Path, String> openFiles, Set<Path> buildOutputDirs) {
         // A half-typed word breaks both the parse position and the dotted-chain
         // detection, so candidates are computed as if the word were not there
         // and and left to the client to narrow by the word, as for keywords.
@@ -137,16 +142,16 @@ public class DRLCompletionHelper {
             int end = offset + col;
             String stripped = text.substring(0, end - word.length()) + text.substring(end);
             Position start = new Position(line, col - word.length());
-            List<CompletionItem> merged = new ArrayList<>(complete(text, caretPosition, client, classIndex, memberIndex, documentPath, openFiles));
+            List<CompletionItem> merged = new ArrayList<>(complete(text, caretPosition, client, classIndex, memberIndex, documentPath, openFiles, buildOutputDirs));
             Set<String> seen = merged.stream().map(DRLCompletionHelper::itemKey).collect(Collectors.toCollection(HashSet::new));
-            for (CompletionItem item : complete(stripped, start, client, classIndex, memberIndex, documentPath, openFiles)) {
+            for (CompletionItem item : complete(stripped, start, client, classIndex, memberIndex, documentPath, openFiles, buildOutputDirs)) {
                 if (item.getLabel() != null && item.getLabel().toLowerCase().startsWith(word.toLowerCase()) && seen.add(itemKey(item))) {
                     merged.add(item);
                 }
             }
             return merged;
         }
-        return complete(text, caretPosition, client, classIndex, memberIndex, documentPath, openFiles);
+        return complete(text, caretPosition, client, classIndex, memberIndex, documentPath, openFiles, buildOutputDirs);
     }
 
     private static String itemKey(CompletionItem item) {
@@ -175,7 +180,7 @@ public class DRLCompletionHelper {
         return line.substring(start, col);
     }
 
-    private static List<CompletionItem> complete(String text, Position caretPosition, LanguageClient client, ClassIndex classIndex, ClassMemberIndex memberIndex, Path documentPath, Map<Path, String> openFiles) {
+    private static List<CompletionItem> complete(String text, Position caretPosition, LanguageClient client, ClassIndex classIndex, ClassMemberIndex memberIndex, Path documentPath, Map<Path, String> openFiles, Set<Path> buildOutputDirs) {
         DRL10Parser drlParser = createDrlParser(text);
 
         int row = caretPosition == null ? -1 : caretPosition.getLine() + 1; // caret line position is zero based
@@ -222,6 +227,7 @@ public class DRLCompletionHelper {
             result = new ArrayList<>(result);
             result.addAll(0, bindingItems(text, caretPosition, compilationUnit, documentPath, openFiles, prefix));
             result.addAll(consequenceNameItems(text, compilationUnit, documentPath, openFiles));
+            result.addAll(0, modifySetterItems(text, caretPosition, compilationUnit, classIndex, memberIndex, documentPath, openFiles, buildOutputDirs));
         } else if (compilationUnit != null && result.isEmpty() && caretPosition != null) {
             // The grammar simulation yields nothing after some earlier constructs
             // (a labelled constraint such as {@code $n : age > 3} in a previous rule
@@ -234,6 +240,25 @@ public class DRLCompletionHelper {
             }
         }
         return result;
+    }
+
+    /** Setters of the binding being modified when the caret starts a statement of a {@code modify($x) { ... }} block. */
+    private static List<CompletionItem> modifySetterItems(String text, Position caret,
+            DRL10Parser.CompilationUnitContext compilationUnit, ClassIndex classIndex, ClassMemberIndex memberIndex,
+            Path documentPath, Map<Path, String> openFiles, Set<Path> buildOutputDirs) {
+        int offset = DRLHoverHelper.positionToOffset(text, caret);
+        String target = DRLJavaMethods.modifyTargetType(DRLJavaMethods.tokensBefore(text, offset), text, offset,
+                ParsedDrl.of(text), documentPath, openFiles, classIndex, buildOutputDirs);
+        if (target == null) {
+            return List.of();
+        }
+        String fqcn = resolveFqcn(target, target, compilationUnit, classIndex);
+        if (fqcn == null) {
+            return List.of();
+        }
+        List<String> setters = memberIndex.instanceMethodsOf(fqcn).stream()
+                .filter(signature -> signature.startsWith("set")).toList();
+        return staticItems(List.of(), setters);
     }
 
     private static final List<String> JAVA_LANG_NAMES = List.of("System", "String", "Math", "Integer", "Long",

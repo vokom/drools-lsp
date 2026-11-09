@@ -108,6 +108,9 @@ public final class DRLDefinitionHelper {
             return List.of();
         }
 
+        List<Location> packages = packageDefinition(text, position, word, classIndex, buildOutputDirs);
+        if (!packages.isEmpty()) return packages;
+
         List<Location> locals = DRLConsequenceDefinitions.find(uri, parsed, position, word);
         if (!locals.isEmpty()) return locals;
 
@@ -167,6 +170,50 @@ public final class DRLDefinitionHelper {
         Range range = new Range(new Position(type.declLine, type.declColumn),
                                 new Position(type.declLine, type.declColumn + type.simpleName.length()));
         return new Location(file.toUri().toString(), range);
+    }
+
+    /**
+     * The source directory of the package named by the qualified name in a {@code package} or
+     * {@code import} line, up to and including the clicked segment. Empty when the caret is not on a
+     * package segment or no indexed class belongs to that package.
+     */
+    private static List<Location> packageDefinition(String text, Position position, String word,
+                                                    ClassIndex classIndex, Set<Path> outputs) {
+        String[] lines = text.split("\\r?\\n", -1);
+        if (position.getLine() >= lines.length) return List.of();
+        String line = lines[position.getLine()];
+        String trimmed = line.stripLeading();
+        if (!trimmed.startsWith("package ") && !trimmed.startsWith("import ")) return List.of();
+        int caret = Math.min(position.getCharacter(), line.length());
+        int begin = caret;
+        while (begin > 0 && isNameChar(line.charAt(begin - 1))) begin--;
+        int end = caret;
+        while (end < line.length() && isNameChar(line.charAt(end))) end++;
+        String qualified = line.substring(begin, end);
+        int wordEnd = caret - begin;
+        while (wordEnd < qualified.length() && qualified.charAt(wordEnd) != '.') wordEnd++;
+        boolean last = wordEnd >= qualified.length();
+        if (last && trimmed.startsWith("import ")) return List.of();
+        String packageName = qualified.substring(0, wordEnd);
+        if (packageName.isEmpty() || !qualified.startsWith(packageName)) return List.of();
+        for (String fqcn : classIndex.getAll()) {
+            if (!fqcn.startsWith(packageName + ".")) continue;
+            JavaSourceLocator.Result source = JavaSourceLocator.locateWithJdk(fqcn, outputs);
+            if (source == null) continue;
+            Path dir = toPath(source.location.getUri());
+            if (dir == null) continue;
+            int extra = fqcn.substring(packageName.length() + 1).split("\\.").length;
+            dir = dir.getParent();
+            for (int i = 1; i < extra && dir != null; i++) dir = dir.getParent();
+            if (dir != null) {
+                return List.of(new Location(dir.toUri().toString(), new Range(new Position(0, 0), new Position(0, 0))));
+            }
+        }
+        return List.of();
+    }
+
+    private static boolean isNameChar(char c) {
+        return Character.isJavaIdentifierPart(c) || c == '.';
     }
 
     /** Same-package rule units take precedence over index matches in other packages. */
