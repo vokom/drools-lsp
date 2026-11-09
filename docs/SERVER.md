@@ -66,6 +66,8 @@ JVM properties available before `-jar` include:
 | `drools.lsp.lint.deprecated` | Severity of deprecated syntax findings, default `warning` |
 | `drools.lsp.lint.missingEnd`, `missingSeparator`, `missingSemicolon`, `unbalancedParens`, `unknownTypes` | Existing lint severity controls |
 | `drools.lsp.lint.mvelPropertyAccess` | Property access style hint, default `off` |
+| `drools.lsp.lint.unusedBindings` | Severity of "binding is never used" findings, default `hint`; tagged `Unnecessary` so clients grey them out. `off` disables |
+| `drools.lsp.lint.typeMismatch` | Severity of a field compared with a literal of another kind (a number field against a string, and so on), default `warning`. Drools coerces these at run time, so the engine reports no build error. `off` disables |
 | `drools.lsp.inlayHints.enabled` | Binding type hints |
 
 Severity values are `off`, `hint`, `info`, `warning`, `error`. Deprecated syntax

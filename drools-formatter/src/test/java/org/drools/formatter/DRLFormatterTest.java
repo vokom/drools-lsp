@@ -100,8 +100,8 @@ class DRLFormatterTest {
 
     @Test
     void formatCheckedReportsSyntaxErrors() {
-        // pre-Drools-10 syntax: agenda-group was removed in Drools 10 -> parse errors
-        String drl = "package p;\nrule \"A\"\n  agenda-group \"g\"\n  when\n  then\nend\n";
+        // an unknown attribute (typo of agenda-group, which is now accepted) -> parse errors
+        String drl = "package p;\nrule \"A\"\n  agenda-gruop \"g\"\n  when\n  then\nend\n";
         DRLFormatter.FormatResult result = DRLFormatter.formatChecked(drl);
         assertThat(result.syntaxErrors()).isGreaterThan(0);
 
@@ -136,11 +136,11 @@ class DRLFormatterTest {
 
     @Test
     void formatCheckedSkipsOutputReparseWhenInputAlreadyHasErrors() {
-        // pre-Drools-10 syntax: agenda-group parse error on input. Since the
+        // unknown-attribute parse error on input. Since the
         // input never parsed cleanly, the output re-parse is skipped entirely
         // (outputSyntaxErrors stays 0 - it's not meaningful when the input was
         // already broken).
-        String drl = "package p;\nrule \"A\"\n  agenda-group \"g\"\n  when\n  then\nend\n";
+        String drl = "package p;\nrule \"A\"\n  agenda-gruop \"g\"\n  when\n  then\nend\n";
         DRLFormatter.FormatResult result = DRLFormatter.formatChecked(drl);
         assertThat(result.syntaxErrors()).isGreaterThan(0);
         assertThat(result.outputSyntaxErrors()).isZero();

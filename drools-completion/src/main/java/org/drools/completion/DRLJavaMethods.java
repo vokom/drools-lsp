@@ -109,6 +109,11 @@ public final class DRLJavaMethods {
         return lexer.getAllTokens().stream().filter(t -> t.getChannel() == Token.DEFAULT_CHANNEL).toList();
     }
 
+    /** Unqualified words DRL gives a call-like shape outside Java code. */
+    private static final Set<String> DRL_CALL_LIKE = Set.of("in", "from", "accumulate", "acc", "collect", "forall",
+        "exists", "not", "or", "and", "over", "init", "action", "reverse", "result",
+        "sum", "average", "min", "max", "count", "collectList", "collectSet", "variance");
+
     public static List<Diagnostic> diagnostics(String text, ClassIndex classes, ClassMemberIndex members,
                                                Path document, Map<Path, String> openFiles) {
         return diagnostics(text, classes, members, document, openFiles, Set.of());
@@ -127,6 +132,10 @@ public final class DRLJavaMethods {
             if (name.getType()!=JavaLexer.IDENTIFIER || !tokens.get(i+1).getText().equals("(")) continue;
             if (i > 0 && tokens.get(i-1).getText().equals("new")) continue;
             if (Set.of("eval", "modify", "insert", "insertLogical", "delete", "retract", "update").contains(name.getText())) continue;
+            // DRL LHS syntax that merely looks like a call: `age in (1, 2)`, `from accumulate(...)`,
+            // accumulate functions such as `sum($a)`, and the pattern inside them (`Passport($a: age)`).
+            boolean qualified = i > 0 && tokens.get(i-1).getText().equals(".");
+            if (!qualified && (DRL_CALL_LIKE.contains(name.getText()) || Character.isUpperCase(name.getText().charAt(0)))) continue;
             Position position = new Position(name.getLine()-1, name.getCharPositionInLine());
             if (DRLDefinitionHelper.caretInCommentOrString(parsed, position)) continue;
             // DRL function declarations/imports can supply unqualified calls independently of the pattern.

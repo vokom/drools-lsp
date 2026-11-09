@@ -400,6 +400,14 @@ class DeprecatedConstructsTest {
     }
 
     @Test
+    void orInsideAnOopathFilterIsNotAPatternConnective() {
+        assertThat(diagnose(HEAD + "rule R when Person( /passports[ isExpired() || unusedVisaPages == 0 ] ) then end\n"))
+                .noneMatch(d -> "drools-deprecated".equals(d.getSource()));
+        assertThat(diagnose(HEAD + "rule R when $p : /passports[ isExpired() && age > 1 ] then end\n"))
+                .noneMatch(d -> "drools-deprecated".equals(d.getSource()));
+    }
+
+    @Test
     void cleanDrlProducesNothing() {
         assertThat(diagnose(HEAD + "rule R when Person( age > 18 ) then end\n")).isEmpty();
     }

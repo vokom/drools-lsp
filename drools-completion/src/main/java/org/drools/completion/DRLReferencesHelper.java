@@ -27,6 +27,7 @@ import java.util.Set;
 
 import org.eclipse.lsp4j.Location;
 import org.eclipse.lsp4j.Position;
+import org.eclipse.lsp4j.Range;
 
 /**
  * Find-references ({@code textDocument/references}) for DRL.
@@ -71,6 +72,41 @@ public final class DRLReferencesHelper {
         // Parse the current document once; every step below reuses this parse.
         return collectReferences(uri, ParsedDrl.of(text), position, openFiles, classIndex,
                 buildOutputDirs, includeDeclaration);
+    }
+
+    /**
+     * Occurrences of the symbol at {@code position} within this document only,
+     * for {@code textDocument/documentHighlight}: a {@code $}-binding (scoped to
+     * its rule) or a type name (declared here or resolved on the classpath).
+     */
+    public static List<org.eclipse.lsp4j.DocumentHighlight> highlights(String text, Position position,
+                                                                       ClassIndex classIndex) {
+        List<org.eclipse.lsp4j.DocumentHighlight> out = new ArrayList<>();
+        if (text == null || position == null) {
+            return out;
+        }
+        ParsedDrl parsed = ParsedDrl.of(text);
+        String word = DRLDefinitionHelper.wordAt(text, position);
+        if (word.isEmpty() || DRLDefinitionHelper.caretInCommentOrString(parsed, position)) {
+            return out;
+        }
+        if (word.charAt(0) == '$') {
+            for (Range range : DRLReferenceScanner.bindingOccurrences(parsed, position, word)) {
+                out.add(new org.eclipse.lsp4j.DocumentHighlight(range, org.eclipse.lsp4j.DocumentHighlightKind.Read));
+            }
+            return out;
+        }
+        if (!Character.isJavaIdentifierStart(word.charAt(0))) {
+            return out;
+        }
+        boolean declaredHere = parsed.declaredTypes().stream().anyMatch(t -> word.equals(t.name));
+        if (declaredHere || DRLDefinitionHelper.resolveFqcn(parsed, word, classIndex) != null) {
+            for (DRLReferenceScanner.Occurrence occ : DRLReferenceScanner.typeOccurrences(parsed, word)) {
+                out.add(new org.eclipse.lsp4j.DocumentHighlight(occ.range, occ.declaration
+                        ? org.eclipse.lsp4j.DocumentHighlightKind.Write : org.eclipse.lsp4j.DocumentHighlightKind.Read));
+            }
+        }
+        return out;
     }
 
     /** As {@link #references}, reusing an existing parse (rename shares its parse with this). */

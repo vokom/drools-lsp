@@ -253,6 +253,16 @@ public class DroolsLspDocumentService implements TextDocumentService {
             logger.log(Level.WARNING, "Lint pass failed for " + uri, e);
         }
         try {
+            diagnostics.addAll(org.drools.completion.DRLUnusedBindings.diagnostics(text));
+        } catch (Exception e) {
+            logger.log(Level.WARNING, "Unused-binding lint failed for " + uri, e);
+        }
+        try {
+            diagnostics.addAll(org.drools.completion.DRLTypeMismatch.diagnostics(text, classIndex, classMemberIndex));
+        } catch (Exception e) {
+            logger.log(Level.WARNING, "Type-mismatch lint failed for " + uri, e);
+        }
+        try {
             diagnostics.addAll(unknownTypeDiagnostics(uri, text, parsed));
         } catch (Exception e) {
             logger.log(Level.WARNING, "Unknown-type lint failed for " + uri, e);
@@ -599,6 +609,18 @@ public class DroolsLspDocumentService implements TextDocumentService {
                     uri, text, params.getPosition(), classIndex, server.getClasspathEntries(),
                     javaSourceIndex, openSiblings(documentPath)));
             return Either.forLeft(definitions == null ? List.of() : definitions);
+        });
+    }
+
+    @Override
+    public CompletableFuture<List<? extends org.eclipse.lsp4j.DocumentHighlight>> documentHighlight(
+            org.eclipse.lsp4j.DocumentHighlightParams params) {
+        return CompletableFuture.supplyAsync(() -> {
+            if (params == null || params.getTextDocument() == null) {
+                return Collections.<org.eclipse.lsp4j.DocumentHighlight>emptyList();
+            }
+            String text = sourcesMap.get(params.getTextDocument().getUri());
+            return DRLReferencesHelper.highlights(text, params.getPosition(), classIndex);
         });
     }
 

@@ -442,9 +442,11 @@ public class DroolsLspServer implements LanguageServer, LanguageClientAware, Aut
         syncOptions.setSave(new SaveOptions(false));
         initializeResult.getCapabilities().setTextDocumentSync(syncOptions);
         CompletionOptions completionOptions = new CompletionOptions();
+        completionOptions.setTriggerCharacters(List.of("."));
         initializeResult.getCapabilities().setCompletionProvider(completionOptions);
         initializeResult.getCapabilities().setDefinitionProvider(true);
         initializeResult.getCapabilities().setReferencesProvider(true);
+        initializeResult.getCapabilities().setDocumentHighlightProvider(true);
         initializeResult.getCapabilities().setRenameProvider(new RenameOptions(true));
         initializeResult.getCapabilities().setCodeLensProvider(new CodeLensOptions(false));
         initializeResult.getCapabilities().setHoverProvider(true);

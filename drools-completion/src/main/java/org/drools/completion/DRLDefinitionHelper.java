@@ -114,6 +114,9 @@ public final class DRLDefinitionHelper {
         List<Location> bindings = DRLBindingDefinitions.find(uri, parsed, position, word);
         if (!bindings.isEmpty() || word.startsWith("$")) return bindings;
 
+        List<Location> functions = DRLFunctionDefinitions.find(uri, parsed, word, toPath(uri), openFiles);
+        if (!functions.isEmpty()) return functions;
+
         // A unit declaration names a Java rule-unit class, not a DRL declared fact type.
         var unit = parsed.compilationUnit.unitdef();
         Token token = parsed.tokenAt(position);

@@ -129,7 +129,7 @@ class FormatCLITest {
   @Test
   void writeRefusesOnParseErrors(@TempDir Path dir) throws Exception {
     Path f = dir.resolve("broken.drl");
-    String original = "package p;\nrule \"A\"\n  agenda-group \"g\"\n  when\n  then\nend\n";
+    String original = "package p;\nrule \"A\"\n  agenda-gruop \"g\"\n  when\n  then\nend\n";
     Files.writeString(f, original);
 
     int exit = runCli("--write", f.toString());
@@ -141,14 +141,14 @@ class FormatCLITest {
   @Test
   void checkReportsParseErrorsDistinctly(@TempDir Path dir) throws Exception {
     Path f = dir.resolve("broken.drl");
-    Files.writeString(f, "package p;\nrule \"A\"\n  agenda-group \"g\"\n  when\n  then\nend\n");
+    Files.writeString(f, "package p;\nrule \"A\"\n  agenda-gruop \"g\"\n  when\n  then\nend\n");
     assertThat(runCli("--check", f.toString())).isEqualTo(2);
   }
 
   @Test
   void stdoutModeEmitsNothingForUnparseableInput(@TempDir Path dir) throws Exception {
     Path f = dir.resolve("broken.drl");
-    Files.writeString(f, "package p;\nrule \"A\"\n  agenda-group \"g\"\n  when\n  then\nend\n");
+    Files.writeString(f, "package p;\nrule \"A\"\n  agenda-gruop \"g\"\n  when\n  then\nend\n");
     // default mode: formatted text goes to stdout — for broken input stdout must stay empty
     CliRun run = runCliCaptured(f.toString());
     assertThat(run.exit()).isEqualTo(2);
@@ -204,7 +204,7 @@ class FormatCLITest {
 
   @Test
   void stdinModeRefusesOnParseErrors() throws Exception {
-    String brokenDrl = "package p;\nrule \"A\"\n  agenda-group \"g\"\n  when\n  then\nend\n";
+    String brokenDrl = "package p;\nrule \"A\"\n  agenda-gruop \"g\"\n  when\n  then\nend\n";
     InputStream originalIn = System.in;
     try {
       System.setIn(new ByteArrayInputStream(brokenDrl.getBytes(StandardCharsets.UTF_8)));
@@ -242,7 +242,7 @@ class FormatCLITest {
   @Test
   void writeDirContinuesPastFailures(@TempDir Path dir) throws Exception {
     Files.writeString(dir.resolve("a_broken.drl"),
-        "package p;\nrule \"A\"\n  agenda-group \"g\"\n  when\n  then\nend\n");
+        "package p;\nrule \"A\"\n  agenda-gruop \"g\"\n  when\n  then\nend\n");
     Files.writeString(dir.resolve("b_good.drl"), "package p;\nrule \"B\"\nwhen\nthen\nend\n");
 
     CliRun run = runCliCaptured("--write-dir", dir.toString());
@@ -488,7 +488,7 @@ class FormatCLITest {
   @Test
   void linesStillRefusesUnparseableInput(@TempDir Path dir) throws Exception {
     Path f = dir.resolve("broken.drl");
-    String original = "package p;\nrule \"A\"\n  agenda-group \"g\"\n  when\n  then\nend\n";
+    String original = "package p;\nrule \"A\"\n  agenda-gruop \"g\"\n  when\n  then\nend\n";
     Files.writeString(f, original);
 
     CliRun run = runCliCaptured("--write", "--lines", "3:3", f.toString());

@@ -122,6 +122,60 @@ public class DRLCompletionHelper {
      *                  edits; may be empty
      */
     public static List<CompletionItem> getCompletionItems(String text, Position caretPosition, LanguageClient client, ClassIndex classIndex, ClassMemberIndex memberIndex, Path documentPath, Map<Path, String> openFiles) {
+        // A half-typed word breaks both the parse position and the dotted-chain
+        // detection, so candidates are computed as if the word were not there
+        // and and left to the client to narrow by the word, as for keywords.
+        String word = wordBeforeCaret(text, caretPosition);
+        if (!word.isEmpty()) {
+            int col = caretPosition.getCharacter();
+            String[] lines = text.split("(?<=\n)", -1);
+            int line = caretPosition.getLine();
+            int offset = 0;
+            for (int i = 0; i < line; i++) {
+                offset += lines[i].length();
+            }
+            int end = offset + col;
+            String stripped = text.substring(0, end - word.length()) + text.substring(end);
+            Position start = new Position(line, col - word.length());
+            List<CompletionItem> merged = new ArrayList<>(complete(text, caretPosition, client, classIndex, memberIndex, documentPath, openFiles));
+            Set<String> seen = merged.stream().map(DRLCompletionHelper::itemKey).collect(Collectors.toCollection(HashSet::new));
+            for (CompletionItem item : complete(stripped, start, client, classIndex, memberIndex, documentPath, openFiles)) {
+                if (item.getLabel() != null && item.getLabel().toLowerCase().startsWith(word.toLowerCase()) && seen.add(itemKey(item))) {
+                    merged.add(item);
+                }
+            }
+            return merged;
+        }
+        return complete(text, caretPosition, client, classIndex, memberIndex, documentPath, openFiles);
+    }
+
+    private static String itemKey(CompletionItem item) {
+        return item.getKind() + "|" + item.getLabel() + "|" + item.getDetail();
+    }
+
+    /** The identifier characters directly before the caret, or an empty string. */
+    private static String wordBeforeCaret(String text, Position caret) {
+        if (text == null || caret == null || caret.getLine() < 0) {
+            return "";
+        }
+        String[] lines = text.split("\r?\n", -1);
+        if (caret.getLine() >= lines.length) {
+            return "";
+        }
+        String line = lines[caret.getLine()];
+        int col = caret.getCharacter();
+        if (col > line.length()) {
+            return "";
+        }
+        int start = col;
+        while (start > 0 && (Character.isLetterOrDigit(line.charAt(start - 1))
+                || line.charAt(start - 1) == '_' || line.charAt(start - 1) == '$')) {
+            start--;
+        }
+        return line.substring(start, col);
+    }
+
+    private static List<CompletionItem> complete(String text, Position caretPosition, LanguageClient client, ClassIndex classIndex, ClassMemberIndex memberIndex, Path documentPath, Map<Path, String> openFiles) {
         DRL10Parser drlParser = createDrlParser(text);
 
         int row = caretPosition == null ? -1 : caretPosition.getLine() + 1; // caret line position is zero based
@@ -146,7 +200,8 @@ public class DRLCompletionHelper {
         String[] chain = dottedChainBeforeCaret(text, caretPosition);
         if (chain != null) {
             List<CompletionItem> members = memberItemsForChain(chain, text, caretPosition,
-                    compilationUnit, caretTokenIndex, classIndex, memberIndex, documentPath, openFiles);
+                    compilationUnit, caretTokenIndex, classIndex, memberIndex, documentPath, openFiles,
+                    inConsequence(drlParser, caretTokenIndex));
             if (members != null) {
                 return members;
             }
@@ -162,7 +217,96 @@ public class DRLCompletionHelper {
             candidatesIndex = caretTokenIndex + 1;
         }
 
-        return getCompletionItems(drlParser, candidatesIndex, caretTokenIndex, compilationUnit, classIndex, prefix, memberIndex, documentPath, openFiles);
+        List<CompletionItem> result = getCompletionItems(drlParser, candidatesIndex, caretTokenIndex, compilationUnit, classIndex, prefix, memberIndex, documentPath, openFiles);
+        if (compilationUnit != null && inConsequence(drlParser, caretTokenIndex)) {
+            result = new ArrayList<>(result);
+            result.addAll(0, bindingItems(text, caretPosition, compilationUnit, documentPath, openFiles, prefix));
+            result.addAll(consequenceNameItems(text, compilationUnit, documentPath, openFiles));
+        } else if (compilationUnit != null && result.isEmpty() && caretPosition != null) {
+            // The grammar simulation yields nothing after some earlier constructs
+            // (a labelled constraint such as {@code $n : age > 3} in a previous rule
+            // is one); the enclosing pattern is then read from the text instead.
+            String patternType = enclosingPatternTypeFromText(text, DRLHoverHelper.positionToOffset(text, caretPosition));
+            if (patternType != null && !patternType.isEmpty()) {
+                Map<String, DeclaredType> typeIndex = DRLWorkspaceTypeIndex.build(
+                        DRLDeclaredTypeParser.extractFromCompilationUnit(compilationUnit), documentPath, openFiles);
+                result = memberItemsOfType(patternType, typeIndex, compilationUnit, classIndex, memberIndex);
+            }
+        }
+        return result;
+    }
+
+    private static final List<String> JAVA_LANG_NAMES = List.of("System", "String", "Math", "Integer", "Long",
+            "Double", "Boolean", "Object", "StringBuilder", "Character", "Objects");
+
+    /** Functions declared in the document group, imported types and common {@code java.lang} classes, for {@code then} blocks. */
+    private static List<CompletionItem> consequenceNameItems(String text, DRL10Parser.CompilationUnitContext compilationUnit,
+                                                             Path documentPath, Map<Path, String> openFiles) {
+        List<CompletionItem> items = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (String name : DRLFunctionDefinitions.names(ParsedDrl.of(text), documentPath, openFiles)) {
+            if (seen.add(name)) {
+                CompletionItem item = createCompletionItem(name, CompletionItemKind.Function);
+                item.setDetail("function");
+                items.add(item);
+            }
+        }
+        for (String imported : extractImports(compilationUnit)) {
+            String simple = imported.substring(imported.lastIndexOf('.') + 1);
+            if (!simple.isEmpty() && !simple.equals("*") && seen.add(simple)) {
+                CompletionItem item = createCompletionItem(simple, CompletionItemKind.Class);
+                item.setDetail(imported);
+                items.add(item);
+            }
+        }
+        for (String simple : JAVA_LANG_NAMES) {
+            if (seen.add(simple)) {
+                CompletionItem item = createCompletionItem(simple, CompletionItemKind.Class);
+                item.setDetail("java.lang." + simple);
+                items.add(item);
+            }
+        }
+        return items;
+    }
+
+    /** True when the token at {@code tokenIndex} lies between a rule's {@code then} and its {@code end}. */
+    private static boolean inConsequence(DRL10Parser drlParser, int tokenIndex) {
+        if (!(drlParser.getTokenStream() instanceof org.antlr.v4.runtime.CommonTokenStream stream)) {
+            return false;
+        }
+        List<org.antlr.v4.runtime.Token> all = stream.getTokens();
+        for (int i = Math.min(tokenIndex, all.size() - 1); i >= 0; i--) {
+            int type = all.get(i).getType();
+            if (type == DRL10Lexer.DRL_THEN) return true;
+            if (type == DRL10Lexer.DRL_WHEN || type == DRL10Lexer.DRL_RHS_END || type == DRL10Lexer.DRL_END
+                    || type == DRL10Lexer.DRL_RULE || type == DRL10Lexer.DRL_QUERY) return false;
+        }
+        return false;
+    }
+
+    /** The {@code $}-bindings visible at the caret, offered as variables with their types. */
+    private static List<CompletionItem> bindingItems(String text, Position caret,
+                                                     DRL10Parser.CompilationUnitContext compilationUnit,
+                                                     Path documentPath, Map<Path, String> openFiles, String prefix) {
+        List<CompletionItem> items = new ArrayList<>();
+        try {
+            Map<String, DeclaredType> typeIndex = DRLWorkspaceTypeIndex.build(
+                    DRLDeclaredTypeParser.extractFromCompilationUnit(compilationUnit), documentPath, openFiles);
+            Map<String, String> bindings = LhsBindingResolver.resolveAt(text,
+                    DRLHoverHelper.positionToOffset(text, caret), typeIndex);
+            for (Map.Entry<String, String> b : bindings.entrySet()) {
+                String name = "$" + b.getKey();
+                if (prefix != null && !prefix.isEmpty() && !name.startsWith(prefix)) continue;
+                CompletionItem item = new CompletionItem(name);
+                item.setKind(CompletionItemKind.Variable);
+                item.setDetail(b.getValue() == null ? "binding" : simpleNameOf(b.getValue()));
+                item.setSortText("0" + name);
+                items.add(item);
+            }
+        } catch (RuntimeException e) {
+            logger.log(Level.FINE, "Binding completion failed", e);
+        }
+        return items;
     }
 
     static List<CompletionItem> getCompletionItems(DRL10Parser drlParser, int nodeIndex) {
@@ -304,7 +448,7 @@ public class DRLCompletionHelper {
                                                             DRL10Parser.CompilationUnitContext compilationUnit,
                                                             int caretTokenIndex, ClassIndex classIndex,
                                                             ClassMemberIndex memberIndex, Path documentPath,
-                                                            Map<Path, String> openFiles) {
+                                                            Map<Path, String> openFiles, boolean methodView) {
         if (compilationUnit == null) {
             return null;
         }
@@ -363,7 +507,15 @@ public class DRLCompletionHelper {
             if (hopType == null) {
                 return List.of();
             }
+            String owner = rootType;
             rootType = hopType;
+            if (declared == null) {
+                String fqcn = resolveFqcn(owner, simpleNameOf(owner), compilationUnit, classIndex);
+                String qualified = fqcn == null ? null : memberIndex.staticFieldTypeOf(fqcn, chain[firstFieldSegment]);
+                if (qualified != null) {
+                    rootType = qualified;
+                }
+            }
             firstFieldSegment++;
         }
 
@@ -379,6 +531,12 @@ public class DRLCompletionHelper {
                     LhsBindingResolver.typeOrClasspath(resolved, typeIndex), path, typeIndex);
             if (resolved == null) {
                 return List.of();
+            }
+        }
+        if (methodView && typeIndex.get(simpleNameOf(resolved)) == null) {
+            String fqcn = resolveFqcn(resolved, simpleNameOf(resolved), compilationUnit, classIndex);
+            if (fqcn != null) {
+                return staticItems(List.of(), memberIndex.instanceMethodsOf(fqcn));
             }
         }
         return memberItemsOfType(resolved, typeIndex, compilationUnit, classIndex, memberIndex);

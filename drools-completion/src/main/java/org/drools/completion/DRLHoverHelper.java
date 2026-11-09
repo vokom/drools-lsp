@@ -92,6 +92,11 @@ public final class DRLHoverHelper {
         Map<String, DeclaredType> typeIndex =
                 DRLWorkspaceTypeIndex.build(currentDocTypes, documentPath, openFiles);
 
+        Hover method = methodHover(word, text, position, parsed, classIndex, memberIndex, documentPath, openFiles);
+        if (method != null) {
+            return method;
+        }
+
         if (chain.segments.length >= 2) {
             return hoverChain(chain, text, position, parsed, currentDocTypes, typeIndex,
                               classIndex, memberIndex, documentPath, openFiles);
@@ -733,6 +738,59 @@ public final class DRLHoverHelper {
      * character offset into {@code text}. DRL files are ASCII in practice, so
      * the character offset matches code units. Clamped to {@code text.length()}.
      */
+    /**
+     * Hover for a method call such as {@code isExpired()} or {@code $p.setAge(1)}:
+     * every public overload of that name on the receiver, with return types and
+     * parameters. {@code null} when the word is not a call or the receiver does
+     * not resolve, so the other hover steps still run.
+     */
+    private static Hover methodHover(String word, String text, Position position, ParsedDrl parsed,
+                                     ClassIndex classIndex, ClassMemberIndex memberIndex,
+                                     Path documentPath, Map<Path, String> openFiles) {
+        if (Character.isUpperCase(word.charAt(0)) || word.startsWith("$")) {
+            return null;
+        }
+        org.eclipse.lsp4j.Range range = DRLDefinitionHelper.wordRangeAt(text, position);
+        if (range == null) {
+            return null;
+        }
+        int end = positionToOffset(text, range.getEnd());
+        while (end < text.length() && (text.charAt(end) == ' ' || text.charAt(end) == '\t')) {
+            end++;
+        }
+        if (end >= text.length() || text.charAt(end) != '(') {
+            return null;
+        }
+        Class<?> receiver;
+        try {
+            receiver = DRLJavaMethods.receiver(text, position, parsed, classIndex, memberIndex,
+                    documentPath, openFiles);
+        } catch (RuntimeException e) {
+            return null;
+        }
+        if (receiver == null) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        try {
+            for (java.lang.reflect.Method m : receiver.getMethods()) {
+                if (!m.getName().equals(word)) continue;
+                sb.append("```java\n").append(m.getReturnType().getSimpleName()).append(' ').append(word).append('(');
+                Class<?>[] params = m.getParameterTypes();
+                for (int i = 0; i < params.length; i++) {
+                    sb.append(i == 0 ? "" : ", ").append(params[i].getSimpleName());
+                }
+                sb.append(")\n```\n");
+            }
+        } catch (LinkageError | SecurityException unavailable) {
+            return null;
+        }
+        if (sb.length() == 0) {
+            return null;
+        }
+        return markdown("**" + word + "** \u2014 method of `" + receiver.getName() + "`\n\n" + sb);
+    }
+
     public static int positionToOffset(String text, Position position) {
         int line = position.getLine();
         int offset = 0;

@@ -181,7 +181,10 @@ final class DeprecatedConstructs {
             if (type == DRL10Lexer.LPAREN) {
                 Token previous = i > 0 ? tokens.get(i - 1) : null;
                 parens.push(atGroupLevel && previous != null && GROUP_OPENER.contains(previous.getType()));
-            } else if (type == DRL10Lexer.RPAREN && !parens.isEmpty()) {
+            } else if (type == DRL10Lexer.LBRACK) {
+                // An OOPath filter (`/passports[ isExpired() || age == 0 ]`) is a constraint, not a group.
+                parens.push(false);
+            } else if ((type == DRL10Lexer.RPAREN || type == DRL10Lexer.RBRACK) && !parens.isEmpty()) {
                 parens.pop();
             }
         }
@@ -247,6 +250,13 @@ final class DeprecatedConstructs {
         // the identifier `agenda`, `-`, `group` because DRL10 has no such
         // keyword. The string value tells it apart from `agenda - group` in a
         // function body.
+        // DrlParserFactory merges `agenda - group` into a single token of the ruleflow-group type.
+        if (!inLhs && type == DRL10Lexer.DRL_RULEFLOW_GROUP && "agenda-group".equals(token.getText())
+                && next != null && isStringLiteral(next)) {
+            return new Finding("Deprecated: 'agenda-group'" + REMOVAL
+                    + " — use 'ruleflow-group', which the engine treats as the same group.",
+                    "ruleflow-group", token);
+        }
         if (!inLhs && type == DRL10Lexer.IDENTIFIER && "agenda".equals(token.getText())
                 && next != null && next.getType() == DRL10Lexer.SUB
                 && index + 3 < tokens.size()

@@ -63,7 +63,7 @@ public final class DrlParserFactory {
     }
 
     public static DRL10Parser createDrlParser(String text) {
-        FunctionTokenStream tokens = new FunctionTokenStream(new DRL10Lexer(CharStreams.fromString(text)));
+        FunctionTokenStream tokens = new FunctionTokenStream(new AgendaGroupLexer(CharStreams.fromString(text)));
         DRL10Parser parser = new DRL10Parser(tokens);
         parser.setHelper(new ParserHelper(tokens, LanguageLevelOption.DRL10));
         parser.addParseListener(new ParseTreeListener() {
@@ -93,10 +93,52 @@ public final class DrlParserFactory {
         }
     }
 
+    /**
+     * The published DRL10 grammar has no {@code agenda-group} attribute (the
+     * lexer yields {@code agenda}, {@code -}, {@code group}), so any attribute
+     * written after it was a syntax error although the DRL6 engine parser accepts
+     * it. Three directly adjacent tokens are merged into one
+     * {@code DRL_RULEFLOW_GROUP} token, which the grammar already accepts with
+     * the same string value; its text and offsets still cover
+     * {@code agenda-group} in the source.
+     */
+    static final class AgendaGroupLexer extends DRL10Lexer {
+        private final java.util.ArrayDeque<Token> pending = new java.util.ArrayDeque<>();
+
+        AgendaGroupLexer(org.antlr.v4.runtime.CharStream input) {
+            super(input);
+        }
+
+        @Override
+        public Token nextToken() {
+            if (!pending.isEmpty()) {
+                return pending.poll();
+            }
+            Token first = super.nextToken();
+            if (first.getType() != IDENTIFIER || !"agenda".equals(first.getText())) {
+                return first;
+            }
+            Token dash = super.nextToken();
+            if (dash.getType() != SUB || dash.getStartIndex() != first.getStopIndex() + 1) {
+                pending.add(dash);
+                return first;
+            }
+            Token group = super.nextToken();
+            if (group.getType() != IDENTIFIER || !"group".equals(group.getText())
+                    || group.getStartIndex() != dash.getStopIndex() + 1) {
+                pending.add(dash);
+                pending.add(group);
+                return first;
+            }
+            return _factory.create(_tokenFactorySourcePair, DRL_RULEFLOW_GROUP, null, first.getChannel(),
+                    first.getStartIndex(), group.getStopIndex(), first.getLine(), first.getCharPositionInLine());
+        }
+    }
+
     private static final class FunctionTokenStream extends CommonTokenStream {
         private final List<Body> bodies = new ArrayList<>();
 
-        FunctionTokenStream(DRL10Lexer lexer) {
+        FunctionTokenStream(AgendaGroupLexer lexer) {
             super(lexer);
         }
 

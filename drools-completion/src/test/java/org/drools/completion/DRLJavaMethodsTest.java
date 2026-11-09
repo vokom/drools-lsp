@@ -42,6 +42,24 @@ class DRLJavaMethodsTest {
         assertThat(diagnostics("rule R when UnknownType(noSuchMethod()) then end")).isEmpty();
         assertThat(diagnostics("import demo.Passport; rule R when Passport(new String() != null) then end")).isEmpty();
     }
+    @Test void drlLhsSyntaxThatLooksLikeACallIsNotAMethod() {
+        String head = "import demo.Passport; rule R when ";
+        assertThat(diagnostics(head + "$p: Passport( in (1, 2, 3) ) then end")).isEmpty();
+        assertThat(diagnostics(head + "$n: Number() from accumulate( Passport($a: age), sum($a) ) then end")).isEmpty();
+        assertThat(diagnostics(head + "$l: java.util.List() from collect( Passport( age > 1 ) ) then end")).isEmpty();
+        assertThat(diagnostics(head + "forall( Passport( age >= 10 ) ) then end")).isEmpty();
+        // a qualified call is still checked
+        assertThat(diagnostics(head + "$p: Passport() then $p.sum(); end")).hasSize(1);
+    }
+    @Test void hoverOnAMethodCallListsItsOverloads() {
+        String text = "import demo.Passport; rule R when $p: Passport() then $p.isExpired(); end";
+        try (var members = ClassMemberIndex.of(Set.of(classes))) {
+            var hover = DRLHoverHelper.hover(text, new Position(0, text.indexOf("isExpired") + 2),
+                    ClassIndex.build(Set.of(classes)), members, root.resolve("test.drl"));
+            assertThat(hover).isNotNull();
+            assertThat(hover.getContents().getRight().getValue()).contains("boolean isExpired()").contains("demo.Passport");
+        }
+    }
     @Test void ruleScopedBindingsAndDeclaredFunctionsDoNotProduceFalseErrors() {
         assertThat(diagnostics("import demo.Passport; function boolean custom() {return true;} rule R when Passport(custom()) then end")).isEmpty();
         assertThat(diagnostics("import demo.Passport; rule R when $p: Passport() then $p.isExpired(); end rule S when $p: UnknownType() then $p.notKnown(); end")).isEmpty();

@@ -72,6 +72,29 @@ class DrlParserFactoryTest {
     }
 
     @Test
+    void agendaGroupMayBeFollowedByOtherAttributes() {
+        for (String attrs : new String[] {
+                "agenda-group \"a\"\n  salience 10",
+                "dialect \"java\"\n  agenda-group \"a\"\n  no-loop true",
+                "agenda-group \"a\", salience 10",
+                "salience 5\n  agenda-group \"a\"" }) {
+            DRL10Parser parser = DrlParserFactory.createDrlParser(
+                    "package p\nrule \"r\"\n  " + attrs + "\n  when\n  then\nend\n");
+            parser.removeErrorListeners();
+            parser.compilationUnit();
+            assertThat(parser.getNumberOfSyntaxErrors()).as(attrs).isZero();
+        }
+    }
+
+    @Test
+    void spacedAgendaMinusGroupIsNotMerged() {
+        DRL10Parser parser = DrlParserFactory.createDrlParser("agenda - group");
+        CommonTokenStream tokens = (CommonTokenStream) parser.getTokenStream();
+        tokens.fill();
+        assertThat(tokens.getTokens()).extracting(t -> t.getText()).contains("agenda", "-", "group");
+    }
+
+    @Test
     void malformedLambdaStillReportsAnError() {
         DRL10Parser parser = DrlParserFactory.createDrlParser(
                 "function void bad(List xs) { xs.forEach(e -> out.add( )); return +; }");

@@ -359,6 +359,51 @@ public final class ClassMemberIndex implements AutoCloseable {
         }
     }
 
+    /** Fully qualified type of the public static field {@code name} of {@code fqcn}, or null. */
+    public String staticFieldTypeOf(String fqcn, String name) {
+        Class<?> clazz = fqcn == null ? null : tryLoad(fqcn);
+        if (clazz == null || name == null) {
+            return null;
+        }
+        try {
+            java.lang.reflect.Field f = clazz.getField(name);
+            return Modifier.isStatic(f.getModifiers()) ? f.getType().getName().replace('$', '.') : null;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /**
+     * Public instance method signatures of {@code fqcn} in the shape
+     * {@link #staticMethodsOf} uses, for completion in a consequence where the
+     * code is Java and {@code $p.} should offer {@code getName()} and
+     * {@code setAge(int)}, not DRL property names. Methods declared by
+     * {@link Object} are left out as noise. Empty when the class cannot load.
+     */
+    public List<String> instanceMethodsOf(String fqcn) {
+        if (fqcn == null || fqcn.isEmpty()) {
+            return Collections.emptyList();
+        }
+        Class<?> clazz = tryLoad(fqcn);
+        if (clazz == null) {
+            return Collections.emptyList();
+        }
+        try {
+            java.util.Set<String> seen = new java.util.LinkedHashSet<>();
+            for (Method m : clazz.getMethods()) {
+                if (Modifier.isStatic(m.getModifiers()) || m.getDeclaringClass() == Object.class) {
+                    continue;
+                }
+                seen.add(m.getName() + "(" + parameterList(m.getParameterTypes(), m.isVarArgs())
+                        + ") : " + m.getReturnType().getSimpleName());
+            }
+            return new ArrayList<>(seen);
+        } catch (Throwable t) {
+            logger.log(Level.FINE, "Failed to reflect instance methods of " + fqcn, t);
+            return Collections.emptyList();
+        }
+    }
+
     /**
      * Attempts to load {@code fqcn} without running static initializers.
      * Returns {@code null} (rather than throwing) when the loader is absent

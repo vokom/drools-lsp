@@ -211,6 +211,71 @@ final class DRLReferenceScanner {
         }
     }
 
+    /**
+     * Ranges of {@code $}-bindings that are declared ({@code $p : Type(...)} or
+     * {@code Type( $n : name )}) but never mentioned again in the same rule or
+     * query, neither in the left-hand side nor in the consequence. A name seen
+     * only without a declaring colon is left alone: that is an unresolved
+     * variable, which the compile diagnostics already report.
+     */
+    static List<Range> unusedBindings(ParsedDrl parsed) {
+        List<Range> unused = new ArrayList<>();
+        if (parsed == null) {
+            return unused;
+        }
+        try {
+            List<Token> all = parsed.tokens().getTokens();
+            int start = -1;
+            for (int i = 0; i <= all.size(); i++) {
+                boolean boundary = i == all.size()
+                        || all.get(i).getType() == DRL10Lexer.DRL_RULE || all.get(i).getType() == DRL10Lexer.DRL_QUERY;
+                if (!boundary) {
+                    continue;
+                }
+                if (start >= 0) {
+                    collectUnused(all, start, i, unused);
+                }
+                start = i;
+            }
+        } catch (Exception e) {
+            logger.fine(() -> "unusedBindings failed: " + e.getMessage());
+        }
+        return unused;
+    }
+
+    private static void collectUnused(List<Token> all, int from, int to, List<Range> out) {
+        java.util.Map<String, Integer> counts = new java.util.LinkedHashMap<>();
+        java.util.Map<String, Range> declarations = new java.util.LinkedHashMap<>();
+        for (int i = from; i < to; i++) {
+            Token t = all.get(i);
+            if (t.getChannel() != Token.DEFAULT_CHANNEL) {
+                continue;
+            }
+            if (t.getType() == DRL10Lexer.RHS_CHUNK) {
+                java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\$[A-Za-z0-9_$]+").matcher(t.getText());
+                while (m.find()) {
+                    counts.merge(m.group(), 1, Integer::sum);
+                }
+            } else if (t.getText() != null && t.getText().length() > 1 && t.getText().charAt(0) == '$'
+                    && Character.isJavaIdentifierStart(t.getText().charAt(1))) {
+                counts.merge(t.getText(), 1, Integer::sum);
+                int next = i + 1;
+                while (next < to && all.get(next).getChannel() != Token.DEFAULT_CHANNEL) {
+                    next++;
+                }
+                if (next < to && all.get(next).getType() == DRL10Lexer.COLON) {
+                    declarations.putIfAbsent(t.getText(),
+                            rangeAt(t.getLine(), t.getCharPositionInLine(), t.getText().length()));
+                }
+            }
+        }
+        for (var e : declarations.entrySet()) {
+            if (counts.getOrDefault(e.getKey(), 0) == 1) {
+                out.add(e.getValue());
+            }
+        }
+    }
+
     // --- consequence (RHS) pass -----------------------------------------
 
     private static void collectConsequence(CommonTokenStream tokens, String simpleName, List<Occurrence> out) {
