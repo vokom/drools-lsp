@@ -175,7 +175,8 @@ public final class DRLDefinitionHelper {
     /**
      * The {@code package-info.java} of the package named by the qualified name in a {@code package} or
      * {@code import} line, up to and including the clicked segment. Empty when the caret is not on a
-     * package segment, no indexed class belongs to that package, or it has no package-info.java.
+     * package segment, no indexed class belongs to that package, or the directory holds no Java source. Opens
+     * package-info.java when present, otherwise the first Java file of the package.
      */
     private static List<Location> packageDefinition(String text, Position position, String word,
                                                     ClassIndex classIndex, Set<Path> outputs) {
@@ -205,13 +206,25 @@ public final class DRLDefinitionHelper {
             int extra = fqcn.substring(packageName.length() + 1).split("\\.").length;
             dir = dir.getParent();
             for (int i = 1; i < extra && dir != null; i++) dir = dir.getParent();
-            // IntelliJ cannot open a directory URI; navigate only where a package-info.java exists.
-            Path info = dir == null ? null : dir.resolve("package-info.java");
-            if (info != null && java.nio.file.Files.isRegularFile(info)) {
-                return List.of(new Location(info.toUri().toString(), new Range(new Position(0, 0), new Position(0, 0))));
+            // IntelliJ cannot open a directory URI: open package-info.java, or failing that the
+            // first Java source in the package directory.
+            Path target = dir == null ? null : packageFile(dir);
+            if (target != null) {
+                return List.of(new Location(target.toUri().toString(), new Range(new Position(0, 0), new Position(0, 0))));
             }
         }
         return List.of();
+    }
+
+    private static Path packageFile(Path dir) {
+        Path info = dir.resolve("package-info.java");
+        if (java.nio.file.Files.isRegularFile(info)) return info;
+        try (var files = java.nio.file.Files.list(dir)) {
+            return files.filter(f -> f.getFileName().toString().endsWith(".java"))
+                    .sorted().findFirst().orElse(null);
+        } catch (java.io.IOException e) {
+            return null;
+        }
     }
 
     private static boolean isNameChar(char c) {

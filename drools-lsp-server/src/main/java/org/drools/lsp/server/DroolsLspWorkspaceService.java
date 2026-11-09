@@ -101,7 +101,7 @@ public class DroolsLspWorkspaceService implements WorkspaceService, AutoCloseabl
             existing.cancel(false);
         }
         pendingRebuild = scheduler.schedule(
-                () -> server.rebuildClassIndex(),
+                server::rebuildClassIndex,
                 DEBOUNCE_DELAY_MS, TimeUnit.MILLISECONDS);
     }
     @Override
