@@ -65,6 +65,18 @@ class DRLLintHelperTest {
                 memberIndex, true)).isEmpty();
     }
 
+    @Test
+    void unknownGlobalTypeIsFlaggedWithATypoSuggestion() {
+        String text = "package demo;\nimport java.util.List;\n\nglobal Persn owner;\nglobal List<String> names;\n"
+                + "global int count;\nglobal java.util.Map lookup;\nglobal Person[] people;\n\nrule R\n  when\n  then\nend\n";
+        ClassIndex index = ClassIndex.of(java.util.Map.of("Person", java.util.List.of("demo.Person")));
+        java.util.List<Diagnostic> found = DRLLintHelper.lintUnknownTypes(text, ParsedDrl.of(text).compilationUnit, null,
+                java.util.Map.of(), index, ClassMemberIndex.of(java.util.Set.of()), true);
+        assertThat(found).hasSize(1);
+        assertThat(found.get(0).getRange().getStart().getLine()).isEqualTo(3);
+        assertThat(found.get(0).getData()).isEqualTo("Person");
+    }
+
     @AfterEach
     void clearLintProperties() {
         System.clearProperty("drools.lsp.lint.missingEnd");

@@ -180,6 +180,19 @@ class DroolsLspDocumentServiceTest {
     }
 
     @Test
+    void structureLintRunsInValidation() {
+        String drl = "package demo;\nimport java.util.List;\nimport java.util.List;\n"
+                + "rule \"R\" salience 1.5\n  when\n  then\nend\n"
+                + "rule \"R\"\n  date-expires \"2020-01-01\"\n  when\n  then\nend\n";
+        DroolsLspDocumentService service = getDroolsLspDocumentService(drl);
+
+        assertThat(service.validate("myDocument"))
+                .extracting(d -> d.getCode().getLeft())
+                .contains("duplicate-import", "unused-import", "invalid-salience",
+                        "duplicate-rule-name", "invalid-date-attribute");
+    }
+
+    @Test
     void cleanDocumentProducesNoDiagnostics() {
         String drl = "package demo;\n"
                 + "rule \"R\"\n"

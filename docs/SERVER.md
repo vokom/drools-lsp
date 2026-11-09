@@ -64,8 +64,15 @@ JVM properties available before `-jar` include:
 | `drools.lsp.java.sourcePaths` | Additional Java source roots, separated by `;` |
 | `drools.lsp.java.packageFilters` | Java source package prefixes, separated by `;` |
 | `drools.lsp.lint.deprecated` | Severity of deprecated syntax findings, default `warning` |
-| `drools.lsp.lint.missingEnd`, `missingSeparator`, `missingSemicolon`, `unbalancedParens`, `unknownTypes` | Existing lint severity controls |
+| `drools.lsp.lint.missingEnd`, `missingSeparator`, `missingSemicolon`, `unbalancedParens`, `unknownTypes` | Existing lint severity controls; `unknownTypes` also covers `global` declaration types |
 | `drools.lsp.lint.mvelPropertyAccess` | Property access style hint, default `off` |
+| `drools.lsp.lint.duplicateRuleNames` | Severity of a rule name repeated within a file, default `warning`. `off` disables |
+| `drools.lsp.lint.duplicateImports` | Severity of a repeated import, default `warning`; tagged `Unnecessary`. `off` disables |
+| `drools.lsp.lint.unusedImports` | Severity of an import whose simple name is used neither in the file nor in a same-package sibling, default `hint`; tagged `Unnecessary`. Wildcard, `static` and `function` imports are not judged. `off` disables |
+| `drools.lsp.lint.unresolvedImports` | Severity of an import that names no indexed class, server JDK class, nested type of either, or DRL-declared type, default `warning`. Runs only after the dependency classpath resolves. `off` disables |
+| `drools.lsp.lint.invalidAttributes` | Severity of a `salience` literal that cannot be an int (a string, decimal, boolean or `null`; expressions and variables are allowed) and a `date-effective`/`date-expires` value that Drools' `DateUtils` would reject, default `error`. Dates follow the server JVM's `drools.dateformat` (default `d-MMM-yyyy`), `drools.defaultlanguage` and `drools.defaultcountry` |
+| `drools.lsp.lint.clauseOrder` | Severity of a rule whose `then` line precedes its `when` line, default `error`. `off` disables |
+| `drools.lsp.lint.unterminatedStrings` | Severity of a `"` or `'` literal still open at the end of its line, default `error`; Java text blocks are skipped. `off` disables |
 | `drools.lsp.lint.unusedBindings` | Severity of "binding is never used" findings, default `hint`; tagged `Unnecessary` so clients grey them out. `off` disables |
 | `drools.lsp.lint.typeMismatch` | Severity of a field compared with a literal of another kind (a number field against a string, and so on), default `warning`. Drools coerces these at run time, so the engine reports no build error. `off` disables |
 | `drools.lsp.lint.unresolvedNames` | Severity of a `$binding` or unqualified call in a Java-dialect consequence that nothing declares (a misspelled `$passport2` or `hell2o(...)`), default `error`. The engine reports the same mistakes only after a project build. `off` disables |

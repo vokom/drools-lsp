@@ -89,6 +89,10 @@ public final class DRLLintHelper {
             Pattern.compile("(?is)\\bthen\\b(.*?)\\bend\\b");
     private static final Pattern THEN_NEW_TYPE =
             Pattern.compile("(?is)\\bnew\\s+([A-Z][A-Za-z0-9_$.]*)\\s*\\(");
+    private static final Pattern GLOBAL_TYPE =
+            Pattern.compile("(?m)^[ \\t]*global\\s+([A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)*)");
+    private static final Set<String> PRIMITIVES =
+            Set.of("boolean", "byte", "char", "short", "int", "long", "float", "double");
     private static final Pattern QUALIFIED_REF =
             Pattern.compile("(?<![\\w.$])([A-Z][A-Za-z0-9_$]*(?:\\.[A-Za-z0-9_$]+)+)");
 
@@ -838,6 +842,16 @@ public final class DRLLintHelper {
         scanQualifiedRefs(cu, sanitized, declared, suggestions, cu, classIndex, memberIndex,
                           siblingImports, classpathResolved, severity, out);
 
+        // Global types: the declared type up to any generic or array suffix.
+        Matcher global = GLOBAL_TYPE.matcher(sanitized);
+        while (global.find() && out.size() < MAX_UNKNOWN_TYPE_DIAGNOSTICS) {
+            if (!PRIMITIVES.contains(global.group(1))) {
+                Range range = rangeOf(sanitized, global.start(1), global.end(1));
+                addUnknown(global.group(1), range, known, suggestions, cu, classIndex,
+                           siblingImports, classpathResolved, severity, out);
+            }
+        }
+
         Matcher then = THEN_END_BLOCK.matcher(sanitized);
         while (then.find() && out.size() < MAX_UNKNOWN_TYPE_DIAGNOSTICS) {
             int base = then.start(1);
@@ -1064,7 +1078,7 @@ public final class DRLLintHelper {
         out.add(makeUnknownTypeWarning(trimmed, range, bestTypoSuggestion(simple, suggestions), severity));
     }
 
-    private static Range rangeOf(String text, int startOffset, int endOffset) {
+    static Range rangeOf(String text, int startOffset, int endOffset) {
         return new Range(offsetToPosition(text, startOffset), offsetToPosition(text, endOffset));
     }
 

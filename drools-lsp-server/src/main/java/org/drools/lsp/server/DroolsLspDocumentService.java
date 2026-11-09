@@ -256,6 +256,14 @@ public class DroolsLspDocumentService implements TextDocumentService {
             logger.log(Level.WARNING, "Lint pass failed for " + uri, e);
         }
         try {
+            diagnostics.addAll(org.drools.completion.DRLStructureLint.diagnostics(text));
+            diagnostics.addAll(org.drools.completion.DRLStructureLint.unusedImports(text, toPath(uri), openSiblings(toPath(uri))));
+            diagnostics.addAll(org.drools.completion.DRLStructureLint.unresolvedImports(text, toPath(uri),
+                    openSiblings(toPath(uri)), classIndex, server.isDependencyClasspathResolved()));
+        } catch (Exception e) {
+            logger.log(Level.WARNING, "Structure lint failed for " + uri, e);
+        }
+        try {
             diagnostics.addAll(org.drools.completion.DRLUnusedBindings.diagnostics(text));
         } catch (Exception e) {
             logger.log(Level.WARNING, "Unused-binding lint failed for " + uri, e);
