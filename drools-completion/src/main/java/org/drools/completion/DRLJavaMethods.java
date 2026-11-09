@@ -65,6 +65,14 @@ public final class DRLJavaMethods {
         } else {
             // A bare head is a property of the enclosing pattern's type when it names one, else a type name.
             type = chain.get(0);
+            Class<?> unitField = implicit == null && ooType == null && token != null && !outputs.isEmpty()
+                    ? unitFieldType(chain.get(0), before, chain.size(), text, parsed, token, document, classes, members, outputs)
+                    : null;
+            if (unitField != null) {
+                Class<?> owner = unitField;
+                for (int i = 1; owner != null && i < chain.size(); i++) owner = propertyType(owner, chain.get(i));
+                return owner;
+            }
             if (implicit != null) {
                 Class<?> implicitClass = members.resolveClass(
                         DRLCompletionHelper.resolveFqcn(implicit, implicit, parsed.compilationUnit, classes));
@@ -86,6 +94,34 @@ public final class DRLJavaMethods {
         if (owner == null && type.indexOf('.') > 0) owner = members.resolveClass(type);
         for (int i = firstHop; owner != null && i < chain.size(); i++) owner = propertyType(owner, chain.get(i));
         return owner;
+    }
+
+    /**
+     * Declared type of the rule unit field {@code name} when the chain head sits in a consequence and no
+     * local variable or global of that name shadows it, else {@code null}. Generic arguments are erased:
+     * {@code DataStore<GroupLeader>} yields {@code DataStore}.
+     */
+    private static Class<?> unitFieldType(String name, List<? extends Token> before, int chainSize, String text,
+            ParsedDrl parsed, int token, Path document, ClassIndex classes, ClassMemberIndex members, Set<Path> outputs) {
+        if (!Character.isLowerCase(name.charAt(0)) || CONSEQUENCE_ROOTS.contains(name)) return null;
+        if (!DRLOOPathDefinitions.inConsequence(parsed.compilationUnit, token)) return null;
+        String unit = DRLDefinitionHelper.resolveUnitFqcn(parsed, classes, outputs);
+        Class<?> unitClass = unit == null ? null : members.resolveClass(unit);
+        if (unitClass == null) return null;
+        if (Pattern.compile("\\bglobal\\s+[^;\\n]*\\b" + Pattern.quote(name) + "\\b").matcher(text).find()) return null;
+        Token head = before.get(before.size() - 2 - 2 * (chainSize - 1));
+        Position at = new Position(head.getLine() - 1, head.getCharPositionInLine());
+        String uri = document.toUri().toString();
+        if (!DRLConsequenceDefinitions.find(uri, parsed, at, name).isEmpty()
+                || !DRLBindingDefinitions.find(uri, parsed, at, name).isEmpty()) return null;
+        try {
+            for (Class<?> type = unitClass; type != null; type = type.getSuperclass()) {
+                for (var field : type.getDeclaredFields()) {
+                    if (field.getName().equals(name)) return field.getType();
+                }
+            }
+        } catch (LinkageError | SecurityException unavailable) { return null; }
+        return null;
     }
 
     /** Type of the public field, or of the getter ({@code getX}, {@code isX} or {@code x}), named {@code name}; else {@code null}. */

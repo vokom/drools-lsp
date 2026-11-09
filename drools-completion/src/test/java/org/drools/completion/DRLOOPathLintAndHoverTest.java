@@ -17,7 +17,7 @@ class DRLOOPathLintAndHoverTest {
         classes = Files.createDirectories(root.resolve("target/classes"));
         Path src = Files.createDirectories(root.resolve("src/main/java/demo"));
         String passport = "package demo; public class Passport { public int age; public java.time.LocalDate expiresOn; }";
-        String unit = "package demo; public class Unit { public java.util.List<Passport> passports; }";
+        String unit = "package demo; public class Unit { public java.util.List<Passport> passports; private final java.util.List<Passport> leaders = new java.util.ArrayList<>(); }";
         Files.writeString(src.resolve("Passport.java"), passport);
         Files.writeString(src.resolve("Unit.java"), unit);
         assertThat(ToolProvider.getSystemJavaCompiler().run(null, null, null, "-d", classes.toString(),
@@ -71,6 +71,16 @@ class DRLOOPathLintAndHoverTest {
             var found = DRLJavaMethods.diagnostics(text.replace("toString", "getPassportNumber"), ClassIndex.build(Set.of(classes)),
                     members, root.resolve("test.drl"), Map.of(), Set.of(classes));
             assertThat(found).noneMatch(d -> d.getMessage().contains("on demo.Valid"));
+        }
+    }
+
+    @Test void misspelledMethodOnPrivateUnitFieldInConsequenceIsFlagged() {
+        String text = "package demo\nunit Unit;\nrule R when\n $p: /passports\nthen\n leaders.ad21d($p);\n leaders.add($p);\nend";
+        try (var members = ClassMemberIndex.of(Set.of(classes))) {
+            var found = DRLJavaMethods.diagnostics(text, ClassIndex.build(Set.of(classes)), members,
+                    root.resolve("test.drl"), Map.of(), Set.of(classes));
+            assertThat(found).extracting(Diagnostic::getMessage).anyMatch(m -> m.contains("Unknown method 'ad21d'"));
+            assertThat(found).extracting(Diagnostic::getMessage).noneMatch(m -> m.contains("'add'"));
         }
     }
 }
