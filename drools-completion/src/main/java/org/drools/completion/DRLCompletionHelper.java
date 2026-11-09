@@ -847,7 +847,7 @@ public class DRLCompletionHelper {
      * way it sees the sibling-file ones from
      * {@link DRLDeclaredTypeParser#cachedFileInfo}.
      */
-    private static Set<String> extractImports(DRL10Parser.CompilationUnitContext compilationUnit) {
+    static Set<String> extractImports(DRL10Parser.CompilationUnitContext compilationUnit) {
         Set<String> imports = new HashSet<>();
         for (DRL10Parser.DrlStatementdefContext stmt : compilationUnit.drlStatementdef()) {
             if (stmt.importdef() instanceof DRL10Parser.ImportStandardDefContext importDef) {

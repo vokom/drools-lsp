@@ -64,7 +64,7 @@ JVM properties available before `-jar` include:
 | `drools.lsp.java.sourcePaths` | Additional Java source roots, separated by `;` |
 | `drools.lsp.java.packageFilters` | Java source package prefixes, separated by `;` |
 | `drools.lsp.lint.deprecated` | Severity of deprecated syntax findings, default `warning` |
-| `drools.lsp.lint.missingEnd`, `missingSeparator`, `missingSemicolon`, `unbalancedParens`, `unknownTypes` | Existing lint severity controls; `unknownTypes` also covers `global` declaration types |
+| `drools.lsp.lint.missingEnd`, `missingSeparator`, `missingSemicolon`, `unbalancedParens`, `unknownTypes` | Existing lint severity controls; `unknownTypes` also covers `global` declaration types, and reports `missing-import` when a type exists on the classpath but is not imported, wildcard-imported, in the rule's package or in `java.lang` |
 | `drools.lsp.lint.mvelPropertyAccess` | Property access style hint, default `off` |
 | `drools.lsp.lint.duplicateRuleNames` | Severity of a rule name repeated within a file, default `warning`. `off` disables |
 | `drools.lsp.lint.duplicateImports` | Severity of a repeated import, default `warning`; tagged `Unnecessary`. `off` disables |
@@ -81,6 +81,14 @@ JVM properties available before `-jar` include:
 Severity values are `off`, `hint`, `info`, `warning`, `error`. Deprecated syntax
 recognition includes half constraints, legacy pattern connectives, misplaced
 annotations, `agenda-group`, and project-declared custom operators lacking `##`.
+
+Code actions offer quick fixes for the diagnostics the client sends in the
+request context: replace an unknown type with a likely spelling, import a
+missing type (one action per candidate when the simple name is ambiguous),
+remove an unused or duplicate import line, rename a duplicate rule to the first
+free `"name N"`, add a missing `;`, remove an unused pattern binding (`$p :
+Person()` or `$p : /oopath`; field bindings get no fix), migrate deprecated
+syntax, and, when enabled, MVEL property access.
 
 ## Workspace grouping and protocol
 

@@ -244,6 +244,19 @@ public final class DRLStructureLint {
         }
     }
 
+    /** Every rule name in {@code text}, unquoted, as the duplicate-name pass reads them. */
+    static Set<String> ruleNames(String text) {
+        Set<String> names = new HashSet<>();
+        Matcher m = RULE_HEADER.matcher(DRLLintHelper.sanitize(text));
+        while (m.find()) {
+            int[] span = ruleName(text, m.end());
+            if (span != null) {
+                names.add(unquote(text.substring(span[0], span[1])));
+            }
+        }
+        return names;
+    }
+
     /** The span of the rule name starting at {@code from}: a quoted string or an identifier. */
     static int[] ruleName(String text, int from) {
         if (from >= text.length()) {

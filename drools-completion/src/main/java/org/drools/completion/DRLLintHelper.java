@@ -82,6 +82,9 @@ public final class DRLLintHelper {
     private static final String PROP_UNKNOWN_TYPES        = "drools.lsp.lint.unknownTypes";
     private static final String PROP_MVEL_PROPERTY_ACCESS = "drools.lsp.lint.mvelPropertyAccess";
 
+    /** Code of the missing-semicolon diagnostic; its range is the statement's last character. */
+    public static final String MISSING_SEMICOLON = "missing-semicolon";
+
     private static final int MAX_DIAGNOSTICS_PER_PASS = 20;
     private static final int MAX_UNKNOWN_TYPE_DIAGNOSTICS = 50;
 
@@ -571,6 +574,7 @@ public final class DRLLintHelper {
             Diagnostic d = new Diagnostic();
             d.setSeverity(severity);
             d.setSource("drools-lint");
+            d.setCode(MISSING_SEMICOLON);
             d.setMessage("Likely missing ';' at the end of this consequence statement");
             d.setRange(new Range(new Position(i, col),
                                  new Position(i, col + 1)));
@@ -1068,8 +1072,16 @@ public final class DRLLintHelper {
             return;
         }
         String simple = toSimpleTypeName(trimmed);
-        if (known.contains(simple)
-                || DRLCompletionHelper.resolveFqcn(trimmed, simple, cu, classIndex, extraImports) != null) {
+        if (known.contains(simple)) {
+            return;
+        }
+        String fqcn = DRLCompletionHelper.resolveFqcn(trimmed, simple, cu, classIndex, extraImports);
+        if (fqcn != null) {
+            // Resolution falls back to any indexed class with this simple name, but
+            // Drools only sees imported, same-package and java.lang types.
+            if (trimmed.equals(simple) && !inScope(fqcn, cu, extraImports)) {
+                out.add(makeMissingImportWarning(simple, fqcn, range, severity));
+            }
             return;
         }
         if (!classpathResolved) {
@@ -1097,6 +1109,36 @@ public final class DRLLintHelper {
             msg += ".";
         }
         d.setMessage(msg);
+        return d;
+    }
+
+    /** Code of a type that exists on the classpath but is neither imported nor in scope; its data is the FQCN. */
+    public static final String MISSING_IMPORT = "missing-import";
+
+    /** Whether Drools sees {@code fqcn} without a qualified name: imported, wildcard-imported, same package or java.lang. */
+    private static boolean inScope(String fqcn, DRL10Parser.CompilationUnitContext cu, Collection<String> extraImports) {
+        int dot = fqcn.lastIndexOf('.');
+        String pkg = dot < 0 ? "" : fqcn.substring(0, dot);
+        if (pkg.equals("java.lang") || pkg.equals(DRLDeclaredTypeParser.extractPackageName(cu))) {
+            return true;
+        }
+        Set<String> imports = new HashSet<>(DRLCompletionHelper.extractImports(cu));
+        if (extraImports != null) {
+            imports.addAll(extraImports);
+        }
+        return imports.contains(fqcn) || imports.contains(pkg + ".*");
+    }
+
+    private static Diagnostic makeMissingImportWarning(String simple, String fqcn, Range range,
+                                                      DiagnosticSeverity severity) {
+        Diagnostic d = new Diagnostic();
+        d.setSeverity(severity);
+        d.setSource("drools-type");
+        d.setCode(MISSING_IMPORT);
+        d.setRange(range);
+        d.setMessage("Type '" + simple + "' is not imported. Drools resolves it only with 'import " + fqcn + ";'.");
+        // The quick-fix reads this to offer "Import '<fqcn>'".
+        d.setData(fqcn);
         return d;
     }
 

@@ -733,6 +733,7 @@ public class DroolsLspDocumentService implements TextDocumentService {
             List<Either<Command, CodeAction>> actions =
                     new ArrayList<>(buildUnknownTypeActions(uri, inRange));
             actions.addAll(buildDeprecatedConstructActions(uri, inRange));
+            actions.addAll(buildLintFixActions(uri, text, inRange, classIndex));
             if (mvelOn) {
                 actions.addAll(buildPropertyAccessActions(uri, text, requested));
             }
@@ -763,11 +764,36 @@ public class DroolsLspDocumentService implements TextDocumentService {
         return replacementActions(uri, diagnostics, "drools-deprecated");
     }
 
+    /**
+     * Quick-fixes for lint diagnostics: add a missing import, remove an unused
+     * or duplicate import, rename a duplicate rule, add a missing ';', and
+     * remove an unused pattern binding. The edits come from
+     * {@link org.drools.completion.DRLQuickFixes}.
+     */
+    static List<Either<Command, CodeAction>> buildLintFixActions(
+            String uri, String text, List<Diagnostic> diagnostics, ClassIndex index) {
+        List<Either<Command, CodeAction>> actions = new ArrayList<>();
+        for (org.drools.completion.DRLQuickFixes.Fix fix
+                : org.drools.completion.DRLQuickFixes.forDiagnostics(text, diagnostics, index)) {
+            CodeAction ca = new CodeAction(fix.title());
+            ca.setKind(CodeActionKind.QuickFix);
+            ca.setDiagnostics(Collections.singletonList(fix.diagnostic()));
+            ca.setIsPreferred(fix.preferred());
+            ca.setEdit(workspaceEdit(uri, fix.edits()));
+            actions.add(Either.forRight(ca));
+        }
+        return actions;
+    }
+
     private static List<Either<Command, CodeAction>> replacementActions(
             String uri, List<Diagnostic> diagnostics, String source) {
         List<Either<Command, CodeAction>> actions = new ArrayList<>();
         for (Diagnostic d : diagnostics) {
             if (!source.equals(d.getSource())) {
+                continue;
+            }
+            // A missing-import diagnostic carries an FQCN to import, not a replacement.
+            if (d.getCode() != null && org.drools.completion.DRLLintHelper.MISSING_IMPORT.equals(d.getCode().getLeft())) {
                 continue;
             }
             String suggestion = suggestionOf(d.getData());

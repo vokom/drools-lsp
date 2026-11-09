@@ -22,6 +22,7 @@ package org.drools.lsp.server;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import com.google.gson.JsonObject;
@@ -29,6 +30,8 @@ import com.google.gson.JsonParser;
 import org.drools.completion.ClassIndex;
 import org.drools.formatter.FormatterOptions;
 import org.eclipse.lsp4j.CodeAction;
+import org.eclipse.lsp4j.CodeActionContext;
+import org.eclipse.lsp4j.CodeActionParams;
 import org.eclipse.lsp4j.Command;
 import org.eclipse.lsp4j.CompletionItem;
 import org.eclipse.lsp4j.CompletionParams;
@@ -554,7 +557,30 @@ class DroolsLspDocumentServiceTest {
                 .satisfies(e -> assertThat(e.getNewText()).isEqualTo("Person"));
     }
 
-    private static final String MESSY = "package p;\nrule R\n  when\n    $p:Person(age>18)\n  then\nend\n";
+    @Test
+    void codeActionOffersLintFixesForDiagnosticsInRange() throws Exception {
+        String drl = "package demo;\nimport java.util.Map;\n"
+                + "rule \"R\"\n  when\n    $p : Person()\n  then\nend\n"
+                + "rule \"R\"\n  when\n  then\nend\n";
+        DroolsLspDocumentService service = getDroolsLspDocumentService(drl);
+        service.setClassIndex(ClassIndex.of(Map.of("Person", List.of("demo.model.Person"))));
+        List<Diagnostic> diagnostics = service.validate("myDocument");
+
+        CodeActionParams params = new CodeActionParams(new TextDocumentIdentifier("myDocument"),
+                new Range(new Position(0, 0), new Position(12, 0)), new CodeActionContext(diagnostics));
+        List<String> titles = service.codeAction(params).get().stream().map(a -> a.getRight().getTitle()).toList();
+
+        assertThat(titles).contains("Remove unused import", "Remove unused binding '$p'",
+                "Rename rule to 'R 2'", "Import 'demo.model.Person'");
+        assertThat(titles).noneMatch(t -> t.startsWith("Replace with"));
+
+        CodeActionParams elsewhere = new CodeActionParams(new TextDocumentIdentifier("myDocument"),
+                new Range(new Position(1, 0), new Position(1, 3)), new CodeActionContext(diagnostics));
+        assertThat(service.codeAction(elsewhere).get()).extracting(a -> a.getRight().getTitle())
+                .containsExactly("Remove unused import");
+    }
+
+    private static final String MESSY ="package p;\nrule R\n  when\n    $p:Person(age>18)\n  then\nend\n";
 
     private static DocumentFormattingParams formattingParams(int tabSize, boolean insertSpaces) {
         DocumentFormattingParams params = new DocumentFormattingParams();
