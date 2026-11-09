@@ -208,9 +208,13 @@ public class DRLCompletionHelper {
             return knowledgeHelperItems();
         }
         if (chain != null) {
+            boolean consequence = inConsequence(drlParser, caretTokenIndex);
             List<CompletionItem> members = memberItemsForChain(chain, text, caretPosition,
                     compilationUnit, caretTokenIndex, classIndex, memberIndex, documentPath, openFiles,
-                    inConsequence(drlParser, caretTokenIndex));
+                    consequence);
+            if (members == null && consequence) {
+                members = unitReceiverItems(text, caretPosition, classIndex, memberIndex, documentPath, openFiles, buildOutputDirs);
+            }
             if (members != null) {
                 return members;
             }
@@ -230,7 +234,9 @@ public class DRLCompletionHelper {
         if (compilationUnit != null && inConsequence(drlParser, caretTokenIndex)) {
             result = new ArrayList<>(result);
             result.addAll(0, bindingItems(text, caretPosition, compilationUnit, documentPath, openFiles, prefix));
+            result.addAll(0, ooPathBindingItems(text, caretPosition, classIndex, documentPath, buildOutputDirs, prefix));
             result.addAll(consequenceNameItems(text, compilationUnit, documentPath, openFiles));
+            result.addAll(unitFieldItems(text, classIndex, memberIndex, buildOutputDirs));
             result.addAll(consequenceActionItems());
             result.addAll(0, modifySetterItems(text, caretPosition, compilationUnit, classIndex, memberIndex, documentPath, openFiles, buildOutputDirs));
         } else if (compilationUnit != null && result.isEmpty() && caretPosition != null) {
@@ -397,6 +403,92 @@ public class DRLCompletionHelper {
             }
         } catch (RuntimeException e) {
             logger.log(Level.FINE, "Binding completion failed", e);
+        }
+        return items;
+    }
+
+    /** Stands in for the member being typed, so the method resolver sees {@code receiver.word} at the caret. */
+    private static final String MEMBER_PLACEHOLDER = "drlCompletionMember";
+
+    /**
+     * Instance methods of a consequence receiver only the rule unit can type: an OOPath binding
+     * ({@code $p.} after {@code $p : /passports}) or a unit data-source field ({@code passports.}).
+     * Resolved the way hover and the method lint resolve it, so all three agree; {@code null} when
+     * the receiver stays unknown, which leaves the position to the grammar.
+     */
+    private static List<CompletionItem> unitReceiverItems(String text, Position caret, ClassIndex classIndex,
+            ClassMemberIndex memberIndex, Path documentPath, Map<Path, String> openFiles, Set<Path> outputs) {
+        if (outputs == null || outputs.isEmpty() || documentPath == null) {
+            return null;
+        }
+        try {
+            int offset = DRLHoverHelper.positionToOffset(text, caret);
+            String probe = text.substring(0, offset) + MEMBER_PLACEHOLDER + text.substring(offset);
+            Class<?> owner = DRLJavaMethods.receiver(probe, caret, ParsedDrl.of(probe), classIndex, memberIndex,
+                    documentPath, openFiles, outputs);
+            return owner == null ? null : staticItems(List.of(), memberIndex.instanceMethodsOf(owner.getName()));
+        } catch (RuntimeException e) {
+            logger.log(Level.FINE, "Rule unit receiver completion failed", e);
+            return null;
+        }
+    }
+
+    /** The OOPath bindings of the rule at the caret, typed by their path's element type when the unit resolves. */
+    private static List<CompletionItem> ooPathBindingItems(String text, Position caret, ClassIndex classIndex,
+            Path documentPath, Set<Path> outputs, String prefix) {
+        List<CompletionItem> items = new ArrayList<>();
+        Set<String> names = LhsBindingResolver.ooPathBindingsAt(text, DRLHoverHelper.positionToOffset(text, caret));
+        for (String binding : names) {
+            String name = "$" + binding;
+            if (prefix != null && !prefix.isEmpty() && !name.startsWith(prefix)) continue;
+            String type = null;
+            if (documentPath != null && outputs != null && !outputs.isEmpty()) {
+                try {
+                    type = DRLOOPathDefinitions.boundPathOwner(documentPath.toUri().toString(), ParsedDrl.of(text),
+                            caret, name, classIndex, outputs);
+                } catch (RuntimeException e) {
+                    logger.log(Level.FINE, "OOPath binding type failed", e);
+                }
+            }
+            CompletionItem item = new CompletionItem(name);
+            item.setKind(CompletionItemKind.Variable);
+            item.setDetail(type == null ? "binding" : simpleNameOf(type));
+            item.setSortText("0" + name);
+            items.add(item);
+        }
+        return items;
+    }
+
+    /**
+     * The rule unit's instance fields, which a consequence reaches by bare name ({@code visas.add(...)}).
+     * A global of the same name shadows a field, as in {@code DRLJavaMethods}.
+     */
+    private static List<CompletionItem> unitFieldItems(String text, ClassIndex classIndex, ClassMemberIndex memberIndex,
+            Set<Path> outputs) {
+        if (outputs == null || outputs.isEmpty()) {
+            return List.of();
+        }
+        List<CompletionItem> items = new ArrayList<>();
+        try {
+            String unit = DRLDefinitionHelper.resolveUnitFqcn(ParsedDrl.of(text), classIndex, outputs);
+            Class<?> unitClass = unit == null ? null : memberIndex.resolveClass(unit);
+            Set<String> seen = new HashSet<>();
+            for (Class<?> type = unitClass; type != null && type != Object.class; type = type.getSuperclass()) {
+                for (java.lang.reflect.Field field : type.getDeclaredFields()) {
+                    String name = field.getName();
+                    if (java.lang.reflect.Modifier.isStatic(field.getModifiers()) || field.isSynthetic()
+                            || !seen.add(name)
+                            || java.util.regex.Pattern.compile("\\bglobal\\s+[^;\\n]*\\b" + java.util.regex.Pattern.quote(name) + "\\b")
+                                    .matcher(text).find()) {
+                        continue;
+                    }
+                    CompletionItem item = createCompletionItem(name, CompletionItemKind.Field);
+                    item.setDetail(field.getType().getSimpleName());
+                    items.add(item);
+                }
+            }
+        } catch (RuntimeException | LinkageError e) {
+            logger.log(Level.FINE, "Rule unit field completion failed", e);
         }
         return items;
     }

@@ -21,8 +21,10 @@ package org.drools.completion;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -254,6 +256,31 @@ public final class LhsBindingResolver {
             }
         }
         return resolve(text, typesByName, accumResultTypes);
+    }
+
+    private static final Pattern OOPATH_BINDING = Pattern.compile("\\$(\\w+)\\s*:\\s*/");
+
+    /**
+     * Names (without {@code $}) of the OOPath bindings, {@code $p : /passports}, in the {@code when}
+     * section of the rule containing {@code offset}; empty outside every rule. Their element types
+     * come from the rule unit, which this text-only resolver cannot see.
+     */
+    public static Set<String> ooPathBindingsAt(String text, int offset) {
+        Set<String> names = new LinkedHashSet<>();
+        if (text == null || text.isEmpty()) {
+            return names;
+        }
+        Matcher block = RULE_BLOCK.matcher(maskCommentsAndStrings(text));
+        while (block.find()) {
+            if (offset >= block.start() && offset < block.end()) {
+                Matcher binding = OOPATH_BINDING.matcher(block.group(1));
+                while (binding.find()) {
+                    names.add(binding.group(1));
+                }
+                break;
+            }
+        }
+        return names;
     }
 
     /**
