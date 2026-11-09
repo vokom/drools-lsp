@@ -83,4 +83,22 @@ class DRLOOPathLintAndHoverTest {
             assertThat(found).extracting(Diagnostic::getMessage).noneMatch(m -> m.contains("'add'"));
         }
     }
+
+    @Test void addLogicalOnRuleUnitDataStoreIsNotFlagged() throws Exception {
+        Path src = Files.createDirectories(root.resolve("stub"));
+        Files.writeString(src.resolve("DataStore.java"),
+                "package org.drools.ruleunits.api; public interface DataStore<T> { Object add(T t); }");
+        Files.writeString(src.resolve("Unit2.java"),
+                "package demo; public class Unit2 { private org.drools.ruleunits.api.DataStore<Passport> visas; "
+                + "public java.util.List<Passport> passports; }");
+        assertThat(ToolProvider.getSystemJavaCompiler().run(null, null, null, "-cp", classes.toString(), "-d", classes.toString(),
+                src.resolve("DataStore.java").toString(), src.resolve("Unit2.java").toString())).isZero();
+        String text = "package demo\nunit Unit2;\nrule R when\n $p: /passports\nthen\n visas.addLogical($p);\n visas.nope($p);\nend";
+        try (var members = ClassMemberIndex.of(Set.of(classes))) {
+            var found = DRLJavaMethods.diagnostics(text, ClassIndex.build(Set.of(classes)), members,
+                    root.resolve("test.drl"), Map.of(), Set.of(classes));
+            assertThat(found).extracting(Diagnostic::getMessage).noneMatch(m -> m.contains("addLogical"));
+            assertThat(found).extracting(Diagnostic::getMessage).anyMatch(m -> m.contains("'nope'"));
+        }
+    }
 }

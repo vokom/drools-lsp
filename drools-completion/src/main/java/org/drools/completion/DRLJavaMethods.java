@@ -220,6 +220,8 @@ public final class DRLJavaMethods {
                     || Pattern.compile("\\bimport\\s+(?:function|static)\\s+[^;]*[.]" + Pattern.quote(word) + "\\s*;").matcher(text).find()) continue;
             Class<?> receiver = receiver(text, position, parsed, classes, members, document, openFiles, outputs);
             if (receiver == null || receiver.getSimpleName().equals(word)) continue;
+            // `store.addLogical(x)` is rewritten by the rule unit compiler; DataStore itself has no such method.
+            if (word.equals("addLogical") && receiver.getName().startsWith("org.drools.ruleunits.api.")) continue;
             try {
                 if (Arrays.stream(receiver.getMethods()).anyMatch(m -> m.getName().equals(word))) continue;
             } catch (LinkageError | SecurityException unavailable) { continue; }
