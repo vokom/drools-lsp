@@ -98,12 +98,20 @@ public final class DRLQuickFixes {
     }
 
     private static Fix importFix(String text, String fqcn, Diagnostic d, boolean preferred) {
+        return new Fix("Import '" + fqcn + "'", List.of(importEdit(text, fqcn)), d, preferred);
+    }
+
+    /**
+     * The edit adding {@code import fqcn;} with the other imports. With an empty
+     * {@code fqcn} the new text is only the leading newline a last line without one
+     * needs, so callers can reuse the position for several candidates.
+     */
+    static TextEdit importEdit(String text, String fqcn) {
         int insertAt = importInsertion(text);
         Position at = position(text, insertAt);
         // A last import or package line without a newline (end of file) needs one before the new import.
         String lead = insertAt > 0 && text.charAt(insertAt - 1) != '\n' ? "\n" : "";
-        TextEdit edit = new TextEdit(new Range(at, at), lead + "import " + fqcn + ";\n");
-        return new Fix("Import '" + fqcn + "'", List.of(edit), d, preferred);
+        return new TextEdit(new Range(at, at), fqcn.isEmpty() ? lead : lead + "import " + fqcn + ";\n");
     }
 
     /** A diagnostic's data as a string; clients may echo it back as a JSON primitive. */

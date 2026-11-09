@@ -1119,33 +1119,48 @@ public final class DRLLintHelper {
 
     /**
      * Whether Drools sees {@code simple} without a qualified name. Resolution picked
-     * {@code fqcn} from the class index, which holds no JDK classes, so the name also
-     * counts as in scope when {@code java.lang} or any wildcard-imported package
-     * provides it: the index's pick may be a different class with the same name.
+     * {@code fqcn} from the class index, which holds no JDK classes, so the index's
+     * pick may differ from the class Drools sees; any class in scope under that
+     * name means no import is missing.
      */
     private static boolean inScope(String fqcn, String simple, DRL10Parser.CompilationUnitContext cu,
                                    Collection<String> extraImports, ClassIndex classIndex) {
-        int dot = fqcn.lastIndexOf('.');
-        String pkg = dot < 0 ? "" : fqcn.substring(0, dot);
-        if (pkg.equals(DRLDeclaredTypeParser.extractPackageName(cu)) || jdkLoadable("java.lang." + simple)) {
-            return true;
-        }
+        return scopedFqcn(simple, cu, extraImports, classIndex) != null;
+    }
+
+    /**
+     * The class {@code simple} names in a DRL document without qualification, or
+     * {@code null} when none is in scope. Java's precedence applies: a single-type
+     * import (this file's or a same-package sibling's in {@code extraImports}),
+     * then a class of the document's own package, then a wildcard-imported
+     * package, then {@code java.lang}. JDK classes are checked through the
+     * platform class loader, since the class index holds none.
+     */
+    static String scopedFqcn(String simple, DRL10Parser.CompilationUnitContext cu,
+                             Collection<String> extraImports, ClassIndex classIndex) {
         Set<String> imports = new HashSet<>(DRLCompletionHelper.extractImports(cu));
         if (extraImports != null) {
             imports.addAll(extraImports);
         }
-        if (imports.contains(fqcn)) {
-            return true;
+        for (String imported : imports) {
+            if (!imported.endsWith(".*") && imported.endsWith("." + simple)) {
+                return imported;
+            }
+        }
+        String ownPackage = DRLDeclaredTypeParser.extractPackageName(cu);
+        String samePackage = ownPackage.isEmpty() ? simple : ownPackage + "." + simple;
+        if (classIndex.forSimpleName(simple).contains(samePackage)) {
+            return samePackage;
         }
         for (String imported : imports) {
             if (imported.endsWith(".*")) {
                 String candidate = imported.substring(0, imported.length() - 1) + simple;
                 if (classIndex.forSimpleName(simple).contains(candidate) || jdkLoadable(candidate)) {
-                    return true;
+                    return candidate;
                 }
             }
         }
-        return false;
+        return jdkLoadable("java.lang." + simple) ? "java.lang." + simple : null;
     }
 
     private static boolean jdkLoadable(String fqcn) {

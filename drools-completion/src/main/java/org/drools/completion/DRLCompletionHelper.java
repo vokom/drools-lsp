@@ -41,6 +41,7 @@ import org.drools.drl.parser.antlr4.DRL10Parser;
 import org.eclipse.lsp4j.CompletionItem;
 import org.eclipse.lsp4j.CompletionItemKind;
 import org.eclipse.lsp4j.Position;
+import org.eclipse.lsp4j.TextEdit;
 import org.eclipse.lsp4j.services.LanguageClient;
 
 import static org.drools.drl.parser.antlr4.DRL10ParserHelper.computeTokenIndex;
@@ -203,6 +204,9 @@ public class DRLCompletionHelper {
         // segments of a qualified name, where the head names no type and the
         // walk must leave the position to c3 rather than answer with nothing.
         String[] chain = dottedChainBeforeCaret(text, caretPosition);
+        if (chain != null && chain.length == 1 && "drools".equals(chain[0]) && inConsequence(drlParser, caretTokenIndex)) {
+            return knowledgeHelperItems();
+        }
         if (chain != null) {
             List<CompletionItem> members = memberItemsForChain(chain, text, caretPosition,
                     compilationUnit, caretTokenIndex, classIndex, memberIndex, documentPath, openFiles,
@@ -222,11 +226,12 @@ public class DRLCompletionHelper {
             candidatesIndex = caretTokenIndex + 1;
         }
 
-        List<CompletionItem> result = getCompletionItems(drlParser, candidatesIndex, caretTokenIndex, compilationUnit, classIndex, prefix, memberIndex, documentPath, openFiles);
+        List<CompletionItem> result = getCompletionItems(drlParser, candidatesIndex, caretTokenIndex, compilationUnit, classIndex, prefix, memberIndex, documentPath, openFiles, text);
         if (compilationUnit != null && inConsequence(drlParser, caretTokenIndex)) {
             result = new ArrayList<>(result);
             result.addAll(0, bindingItems(text, caretPosition, compilationUnit, documentPath, openFiles, prefix));
             result.addAll(consequenceNameItems(text, compilationUnit, documentPath, openFiles));
+            result.addAll(consequenceActionItems());
             result.addAll(0, modifySetterItems(text, caretPosition, compilationUnit, classIndex, memberIndex, documentPath, openFiles, buildOutputDirs));
         } else if (compilationUnit != null && result.isEmpty() && caretPosition != null) {
             // The grammar simulation yields nothing after some earlier constructs
@@ -263,6 +268,68 @@ public class DRLCompletionHelper {
 
     private static final List<String> JAVA_LANG_NAMES = List.of("System", "String", "Math", "Integer", "Long",
             "Double", "Boolean", "Object", "StringBuilder", "Character", "Objects");
+
+    /**
+     * The consequence's fact operations, which DRL lets a rule call without the
+     * {@code drools.} receiver, plus the {@code drools} variable itself
+     * ({@code org.drools.core.rule.consequence.KnowledgeHelper}).
+     */
+    private static final List<String[]> CONSEQUENCE_ACTIONS = List.of(
+            new String[]{"insert", "insert(Object fact)"},
+            new String[]{"insertLogical", "insertLogical(Object fact)"},
+            new String[]{"update", "update(Object fact)"},
+            new String[]{"modify", "modify(fact) { setters }"},
+            new String[]{"delete", "delete(Object fact)"},
+            new String[]{"retract", "retract(Object fact)"});
+
+    /**
+     * User-facing methods of {@code drools} in a consequence, as declared by
+     * drools-core 10.2.0 {@code KnowledgeHelper}, drools-base
+     * {@code ConsequenceContext} and kie-api {@code RuleContext}/{@code KieContext}.
+     */
+    private static final List<String[]> KNOWLEDGE_HELPER_METHODS = List.of(
+            new String[]{"halt", "void halt()"},
+            new String[]{"getRule", "Rule getRule()"},
+            new String[]{"getMatch", "Match getMatch()"},
+            new String[]{"getKieRuntime", "KieRuntime getKieRuntime()"},
+            new String[]{"getKieBase", "KieBase getKieBase()"},
+            new String[]{"insert", "FactHandle insert(Object)"},
+            new String[]{"insertLogical", "FactHandle insertLogical(Object)"},
+            new String[]{"update", "void update(Object)"},
+            new String[]{"delete", "void delete(Object)"},
+            new String[]{"retract", "void retract(Object)"},
+            new String[]{"setFocus", "void setFocus(String agendaGroup)"},
+            new String[]{"getEntryPoint", "EntryPoint getEntryPoint(String)"},
+            new String[]{"getChannel", "Channel getChannel(String)"},
+            new String[]{"getChannels", "Map<String, Channel> getChannels()"},
+            new String[]{"getFactHandle", "FactHandle getFactHandle(Object)"},
+            new String[]{"cancelMatch", "void cancelMatch(Match)"},
+            new String[]{"blockMatch", "void blockMatch(Match)"},
+            new String[]{"unblockAllMatches", "void unblockAllMatches(Match)"},
+            new String[]{"getWorkingMemory", "WorkingMemory getWorkingMemory()"});
+
+    private static List<CompletionItem> consequenceActionItems() {
+        List<CompletionItem> items = new ArrayList<>();
+        for (String[] action : CONSEQUENCE_ACTIONS) {
+            CompletionItem item = createCompletionItem(action[0], CompletionItemKind.Function);
+            item.setDetail(action[1]);
+            items.add(item);
+        }
+        CompletionItem drools = createCompletionItem("drools", CompletionItemKind.Variable);
+        drools.setDetail("KnowledgeHelper");
+        items.add(drools);
+        return items;
+    }
+
+    private static List<CompletionItem> knowledgeHelperItems() {
+        List<CompletionItem> items = new ArrayList<>();
+        for (String[] method : KNOWLEDGE_HELPER_METHODS) {
+            CompletionItem item = createCompletionItem(method[0], CompletionItemKind.Method);
+            item.setDetail(method[1]);
+            items.add(item);
+        }
+        return items;
+    }
 
     /** Functions declared in the document group, imported types and common {@code java.lang} classes, for {@code then} blocks. */
     private static List<CompletionItem> consequenceNameItems(String text, DRL10Parser.CompilationUnitContext compilationUnit,
@@ -339,6 +406,11 @@ public class DRLCompletionHelper {
     }
 
     static List<CompletionItem> getCompletionItems(DRL10Parser drlParser, int nodeIndex, int patternTokenIndex, DRL10Parser.CompilationUnitContext compilationUnit, ClassIndex classIndex, String prefix, ClassMemberIndex memberIndex, Path documentPath, Map<Path, String> openFiles) {
+        return getCompletionItems(drlParser, nodeIndex, patternTokenIndex, compilationUnit, classIndex, prefix, memberIndex, documentPath, openFiles, null);
+    }
+
+    /** As above; with the document {@code text}, class items not yet in scope also add their import. */
+    static List<CompletionItem> getCompletionItems(DRL10Parser drlParser, int nodeIndex, int patternTokenIndex, DRL10Parser.CompilationUnitContext compilationUnit, ClassIndex classIndex, String prefix, ClassMemberIndex memberIndex, Path documentPath, Map<Path, String> openFiles, String text) {
         CodeCompletionCore core = new CodeCompletionCore(drlParser, PREFERRED_RULES, Tokens.IGNORED);
         CodeCompletionCore.CandidatesCollection candidates = core.collectCandidates(nodeIndex, null);
 
@@ -359,7 +431,7 @@ public class DRLCompletionHelper {
                 .collect(Collectors.toList());
 
         if (compilationUnit != null && classIndex.size() > 0 && isPatternPosition(candidates)) {
-            items.addAll(getClassCompletionItems(compilationUnit, classIndex, prefix));
+            items.addAll(getClassCompletionItems(compilationUnit, classIndex, prefix, text, documentPath, openFiles));
         }
 
         if (constraintPosition) {
@@ -814,10 +886,19 @@ public class DRLCompletionHelper {
                 && (identifierPath.contains(DRL10Parser.RULE_label) || identifierPath.contains(DRL10Parser.RULE_unif));
     }
 
-    private static List<CompletionItem> getClassCompletionItems(DRL10Parser.CompilationUnitContext compilationUnit, ClassIndex classIndex, String prefix) {
+    /**
+     * Classes matching {@code prefix}. With the document {@code text}, an item whose
+     * simple name is not in scope also inserts its import, and an item whose simple
+     * name already names a different class inserts its qualified name instead, since
+     * importing it would clash.
+     */
+    private static List<CompletionItem> getClassCompletionItems(DRL10Parser.CompilationUnitContext compilationUnit, ClassIndex classIndex, String prefix,
+                                                                String text, Path documentPath, Map<Path, String> openFiles) {
         Set<String> importedFqcns = extractImports(compilationUnit);
         List<String> matchingFqcns = classIndex.getMatching(prefix);
         List<CompletionItem> items = new ArrayList<>();
+        List<String> siblingImports = text == null ? List.of() : samePackageSiblingImports(compilationUnit, documentPath, openFiles);
+        TextEdit importAt = null;
 
         for (String fqcn : matchingFqcns) {
             String simpleName = fqcn.substring(fqcn.lastIndexOf('.') + 1);
@@ -826,6 +907,18 @@ public class DRLCompletionHelper {
             item.setDetail(fqcn);
             item.setKind(CompletionItemKind.Class);
             item.setInsertText(simpleName);
+            if (text != null && fqcn.indexOf('.') > 0) {
+                String scoped = DRLLintHelper.scopedFqcn(simpleName, compilationUnit, siblingImports, classIndex);
+                if (scoped == null) {
+                    if (importAt == null) {
+                        importAt = DRLQuickFixes.importEdit(text, "");
+                    }
+                    String lead = importAt.getNewText();
+                    item.setAdditionalTextEdits(List.of(new TextEdit(importAt.getRange(), lead + "import " + fqcn + ";\n")));
+                } else if (!scoped.equals(fqcn)) {
+                    item.setInsertText(fqcn);
+                }
+            }
 
             if (importedFqcns.contains(fqcn)) {
                 item.setSortText("0_" + simpleName + "_" + fqcn);
@@ -837,6 +930,19 @@ public class DRLCompletionHelper {
         }
 
         return items;
+    }
+
+    /** Imports of same-package sibling files, which Drools shares across a package. */
+    private static List<String> samePackageSiblingImports(DRL10Parser.CompilationUnitContext compilationUnit,
+                                                          Path documentPath, Map<Path, String> openFiles) {
+        String ownPackage = DRLDeclaredTypeParser.extractPackageName(compilationUnit);
+        List<String> imports = new ArrayList<>();
+        DRLWorkspaceTypeIndex.forEachSiblingInfo(documentPath, openFiles, (info, uri) -> {
+            if (ownPackage.equals(info.packageName)) {
+                imports.addAll(info.imports);
+            }
+        });
+        return imports;
     }
 
     /**

@@ -760,6 +760,79 @@ class DRLCompletionHelperTest {
                 });
     }
 
+    private static final ClassIndex IMPORT_INDEX = ClassIndex.of(Map.of(
+            "Person", List.of("acme.model.Person"),
+            "Address", List.of("acme.a.Address", "acme.b.Address"),
+            "Local", List.of("demo.Local")));
+
+    private List<CompletionItem> classItems(String text, String prefix) {
+        return DRLCompletionHelper.getCompletionItems(text, caretAfter(text, prefix), getLanguageClient(), IMPORT_INDEX)
+                .stream().filter(i -> i.getKind() == CompletionItemKind.Class).toList();
+    }
+
+    private static CompletionItem byDetail(List<CompletionItem> items, String fqcn) {
+        return items.stream().filter(i -> fqcn.equals(i.getDetail())).findFirst().orElseThrow();
+    }
+
+    /** A class not yet in scope inserts its simple name and adds its import after the last one. */
+    @Test
+    void classCompletionAddsTheImportItNeeds() {
+        String text = "package demo;\nimport java.util.List;\n\nrule R\nwhen\n    Pers\nthen\nend\n";
+        CompletionItem person = byDetail(classItems(text, "    Pers"), "acme.model.Person");
+        assertThat(person.getInsertText()).isEqualTo("Person");
+        assertThat(person.getAdditionalTextEdits()).singleElement().satisfies(e -> {
+            assertThat(e.getNewText()).isEqualTo("import acme.model.Person;\n");
+            assertThat(e.getRange().getStart()).isEqualTo(new Position(2, 0));
+        });
+    }
+
+    /** Imported, wildcard-imported and same-package classes need no edit. */
+    @Test
+    void classCompletionLeavesInScopeClassesAlone() {
+        String text = "package demo;\nimport acme.model.Person;\nimport acme.a.*;\nrule R\nwhen\n    \nthen\nend\n";
+        List<CompletionItem> items = DRLCompletionHelper.getCompletionItems(text, new Position(5, 4), getLanguageClient(), IMPORT_INDEX)
+                .stream().filter(i -> i.getKind() == CompletionItemKind.Class).toList();
+        for (String fqcn : List.of("acme.model.Person", "acme.a.Address", "demo.Local")) {
+            CompletionItem item = byDetail(items, fqcn);
+            assertThat(item.getAdditionalTextEdits()).as(fqcn).isNullOrEmpty();
+            assertThat(item.getInsertText()).as(fqcn).isEqualTo(fqcn.substring(fqcn.lastIndexOf('.') + 1));
+        }
+        // The same simple name already means acme.a.Address, so the other one is qualified, not imported.
+        CompletionItem other = byDetail(items, "acme.b.Address");
+        assertThat(other.getInsertText()).isEqualTo("acme.b.Address");
+        assertThat(other.getAdditionalTextEdits()).isNullOrEmpty();
+    }
+
+    /** A consequence offers the fact operations DRL allows without a receiver, and the drools variable. */
+    @Test
+    void consequenceOffersFactActionsAndDrools() {
+        String text = "package p;\nrule R\nwhen\n  $p : Person()\nthen\n  \nend\n";
+        List<CompletionItem> result = DRLCompletionHelper.getCompletionItems(text, new Position(5, 2), getLanguageClient());
+        assertThat(result).extracting(CompletionItem::getLabel)
+                .contains("insert", "insertLogical", "update", "modify", "delete", "retract", "drools", "$p");
+        assertThat(result).filteredOn(i -> "drools".equals(i.getLabel()))
+                .singleElement().satisfies(i -> assertThat(i.getKind()).isEqualTo(CompletionItemKind.Variable));
+    }
+
+    /** After {@code drools.} in a consequence, the KnowledgeHelper methods replace everything else. */
+    @Test
+    void droolsDotOffersKnowledgeHelperMethods() {
+        String text = "package p;\nrule R\nwhen\n  $p : Person()\nthen\n  drools.\nend\n";
+        List<CompletionItem> result = DRLCompletionHelper.getCompletionItems(text, caretAfter(text, "drools."), getLanguageClient());
+        assertThat(result).extracting(CompletionItem::getLabel)
+                .contains("halt", "getRule", "getKieRuntime", "insert", "update", "delete", "setFocus")
+                .doesNotContain("System", "$p", "end");
+        assertThat(result).allMatch(i -> i.getKind() == CompletionItemKind.Method);
+    }
+
+    /** Fact actions belong to consequences only. */
+    @Test
+    void conditionsDoNotOfferFactActions() {
+        String text = "package p;\nrule R\nwhen\n  \nthen\nend\n";
+        assertThat(DRLCompletionHelper.getCompletionItems(text, new Position(3, 2), getLanguageClient()))
+                .extracting(CompletionItem::getLabel).doesNotContain("insert", "drools", "halt");
+    }
+
     /** A fully-qualified type name is a type name too, so the same statics follow it. */
     @Test
     void aQualifiedTypeNameOffersItsStatics() {
